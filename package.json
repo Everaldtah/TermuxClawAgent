@@ -1,0 +1,48 @@
+{
+  "name": "termux-agent",
+  "version": "1.0.0",
+  "description": "Token-optimized AI agent for Android/Termux - Based on OpenClaw",
+  "keywords": ["ai", "agent", "termux", "android", "openclaw", "llm"],
+  "homepage": "https://github.com/termux-agent/termux-agent",
+  "license": "MIT",
+  "author": "Termux Agent Team",
+  "type": "module",
+  "bin": {
+    "termux-agent": "./termux-agent.mjs",
+    "tagent": "./termux-agent.mjs"
+  },
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./cli": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/",
+    "termux-agent.mjs",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x termux-agent.mjs",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node termux-agent.mjs",
+    "test": "node --test dist/**/*.test.js",
+    "install-termux": "bash scripts/install-termux.sh",
+    "setup": "node scripts/setup.js"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
+  }
+}
