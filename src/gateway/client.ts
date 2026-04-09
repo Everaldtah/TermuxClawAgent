@@ -42,11 +42,23 @@ export interface CompletionResponse {
   tool_calls?: ToolCall[];
 }
 
+export interface OAuthConfig {
+  clientId?: string;
+  clientSecret?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenUrl?: string;
+  expiresAt?: number;
+  scope?: string;
+}
+
 export interface ProviderConfig {
   name: string;
   apiKey: string;
   baseUrl?: string;
   defaultModel?: string;
+  oauth?: OAuthConfig;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -68,11 +80,84 @@ export class GatewayClient {
       openai: "https://api.openai.com/v1",
       anthropic: "https://api.anthropic.com/v1",
       ollama: "http://localhost:11434/v1",
+      lmstudio: "http://localhost:1234/v1",
       openrouter: "https://openrouter.ai/api/v1",
       groq: "https://api.groq.com/openai/v1",
-      gemini: "https://generativelanguage.googleapis.com/v1"
+      gemini: "https://generativelanguage.googleapis.com/v1",
+      // NVIDIA NIM / build.nvidia.com — OpenAI-compatible.
+      nvidia: "https://integrate.api.nvidia.com/v1",
+      // Moonshot Kimi — OpenAI-compatible.
+      kimi: "https://api.moonshot.cn/v1",
+      // MiniMax — OpenAI-compatible chat completions endpoint.
+      minimax: "https://api.minimax.chat/v1"
     };
     return urls[provider] || urls.openai;
+  }
+
+  /**
+   * Return the best auth header pair for this provider. OAuth access
+   * tokens (when present and unexpired) take precedence over static API
+   * keys. Anthropic uses a custom `x-api-key` header instead of bearer.
+   */
+  private async getAuthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+    // Merge any static provider-level headers first (e.g. NVIDIA NIM org,
+    // MiniMax GroupId) so callers can add anything providers require.
+    if (this.config.headers) Object.assign(headers, this.config.headers);
+
+    // Prefer OAuth if configured and valid.
+    const oauth = this.config.oauth;
+    if (oauth?.accessToken) {
+      await this.maybeRefreshOAuth();
+      headers["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
+      return headers;
+    }
+
+    // Anthropic uses x-api-key (not bearer). Set elsewhere in completeAnthropic,
+    // but if someone calls through the OpenAI path with an Anthropic key we
+    // still fall through to bearer below.
+    if (this.config.apiKey) {
+      headers["Authorization"] = `Bearer ${this.config.apiKey}`;
+    }
+    return headers;
+  }
+
+  /**
+   * Refresh the OAuth access token if it is expired or about to expire.
+   * Uses the standard `refresh_token` grant — works for Anthropic Console
+   * OAuth, Google/Gemini OAuth, and any RFC-6749 provider.
+   */
+  private async maybeRefreshOAuth(): Promise<void> {
+    const oauth = this.config.oauth;
+    if (!oauth?.refreshToken || !oauth.tokenUrl) return;
+    const now = Date.now();
+    if (oauth.expiresAt && oauth.expiresAt - now > 60_000) return;
+
+    try {
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: oauth.refreshToken,
+        ...(oauth.clientId ? { client_id: oauth.clientId } : {}),
+        ...(oauth.clientSecret ? { client_secret: oauth.clientSecret } : {})
+      });
+      const res = await fetch(oauth.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
+      });
+      if (!res.ok) {
+        this.logger.warn(`OAuth refresh failed (${res.status}) — falling back to existing token`);
+        return;
+      }
+      const data: any = await res.json();
+      oauth.accessToken = data.access_token || oauth.accessToken;
+      if (data.refresh_token) oauth.refreshToken = data.refresh_token;
+      if (data.expires_in) oauth.expiresAt = now + data.expires_in * 1000;
+      this.logger.debug("OAuth access token refreshed");
+    } catch (err: any) {
+      this.logger.warn(`OAuth refresh error: ${err.message}`);
+    }
   }
 
   /**
@@ -124,10 +209,7 @@ export class GatewayClient {
 
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.config.apiKey}`
-      },
+      headers: await this.getAuthHeaders(),
       body: JSON.stringify(body)
     });
 
@@ -163,10 +245,7 @@ export class GatewayClient {
 
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.config.apiKey}`
-      },
+      headers: await this.getAuthHeaders(),
       body: JSON.stringify(body)
     });
 
@@ -235,13 +314,22 @@ export class GatewayClient {
       body.system = systemMessage.content;
     }
 
+    // Anthropic: prefer OAuth bearer when provided (Console OAuth), else x-api-key.
+    const anthropicHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      ...(this.config.headers || {})
+    };
+    if (this.config.oauth?.accessToken) {
+      await this.maybeRefreshOAuth();
+      anthropicHeaders["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
+    } else {
+      anthropicHeaders["x-api-key"] = this.config.apiKey;
+    }
+
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.config.apiKey,
-        "anthropic-version": "2023-06-01"
-      },
+      headers: anthropicHeaders,
       body: JSON.stringify(body)
     });
 
@@ -287,13 +375,22 @@ export class GatewayClient {
       body.system = systemMessage.content;
     }
 
+    // Anthropic: prefer OAuth bearer when provided (Console OAuth), else x-api-key.
+    const anthropicHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      ...(this.config.headers || {})
+    };
+    if (this.config.oauth?.accessToken) {
+      await this.maybeRefreshOAuth();
+      anthropicHeaders["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
+    } else {
+      anthropicHeaders["x-api-key"] = this.config.apiKey;
+    }
+
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.config.apiKey,
-        "anthropic-version": "2023-06-01"
-      },
+      headers: anthropicHeaders,
       body: JSON.stringify(body)
     });
 
@@ -341,13 +438,18 @@ export class GatewayClient {
    * Detect provider from model name
    */
   private detectProvider(model: string): string {
-    if (model.startsWith("claude-")) return "anthropic";
-    if (model.startsWith("gemini-")) return "gemini";
-    if (model.includes("llama") || model.includes("mixtral")) {
-      // Could be Ollama or OpenRouter
-      return this.config.name === "ollama" ? "ollama" : "openai";
+    // Explicit provider set on the config wins over model-name sniffing —
+    // essential for NVIDIA/Kimi/MiniMax whose models have generic names.
+    const explicit = this.config.name;
+    if (["nvidia", "kimi", "minimax", "groq", "openrouter", "lmstudio", "ollama"].includes(explicit)) {
+      return "openai"; // all OpenAI-compatible — use the openai path
     }
-    return "openai"; // Default to OpenAI-compatible
+    if (model.startsWith("claude-") || explicit === "anthropic") return "anthropic";
+    if (model.startsWith("gemini-") || explicit === "gemini") return "gemini";
+    if (model.startsWith("moonshot") || model.startsWith("kimi")) return "openai";
+    if (model.startsWith("abab") || model.startsWith("MiniMax")) return "openai";
+    if (model.includes("llama") || model.includes("mixtral")) return "openai";
+    return "openai";
   }
 
   /**

@@ -13,11 +13,31 @@ export const CONFIG_DIR = join(homedir(), ".termux-agent");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 export const MEMORY_PATH = join(CONFIG_DIR, "memory");
 
+/**
+ * OAuth credentials for providers that support user-authorized flows
+ * (e.g. Anthropic Console OAuth, Google/Gemini OAuth). When present,
+ * the gateway prefers `accessToken` over `apiKey` and will refresh
+ * via `tokenUrl` + `refreshToken` before expiry.
+ */
+export interface OAuthConfig {
+  clientId?: string;
+  clientSecret?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  tokenUrl?: string;
+  expiresAt?: number; // epoch ms
+  scope?: string;
+}
+
 export interface ProviderConfig {
   name: string;
   apiKey: string;
   baseUrl?: string;
   defaultModel?: string;
+  /** Optional OAuth credentials; take precedence over apiKey when present. */
+  oauth?: OAuthConfig;
+  /** Extra headers (e.g. NVIDIA NIM org id, MiniMax GroupId). */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -48,6 +68,12 @@ export interface AgentConfig {
     anthropic?: ProviderConfig;
     ollama?: ProviderConfig;
     openrouter?: ProviderConfig;
+    nvidia?: ProviderConfig;
+    kimi?: ProviderConfig;      // Moonshot Kimi
+    minimax?: ProviderConfig;
+    groq?: ProviderConfig;
+    gemini?: ProviderConfig;
+    [key: string]: ProviderConfig | string | undefined;
   };
   model: {
     default: string;

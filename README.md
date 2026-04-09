@@ -28,6 +28,16 @@ TermuxAgent is a **token-optimized** AI agent specifically designed to run on An
   sensors, clipboard, notifications, TTS, media player, WiFi, brightness,
   volume, share sheet, downloads, vibration, toasts, fingerprint auth.
   See [`src/tools/android.ts`](src/tools/android.ts).
+- 🌐 **Frontier providers, API key *or* OAuth** — built-in support for
+  Anthropic, NVIDIA NIM (`build.nvidia.com`), Moonshot Kimi, MiniMax,
+  OpenAI, Groq, Gemini, and OpenRouter. Every provider config now
+  accepts an optional `oauth` block (`clientId`, `clientSecret`,
+  `accessToken`, `refreshToken`, `tokenUrl`, `expiresAt`) — when
+  present, the gateway uses the bearer token and auto-refreshes via
+  the standard RFC-6749 `refresh_token` grant before expiry.
+  Anthropic additionally supports its Console OAuth bearer in place of
+  `x-api-key`. Per-provider extra `headers` (e.g. NVIDIA NIM org id,
+  MiniMax `GroupId`) are passed through untouched.
 - 🦙 **Local models via Ollama & LM Studio CLI** — register any locally
   hosted model in `config.json` under `localModels[]`. Both Ollama
   (`pkg install ollama`) and LM Studio's `lms` CLI expose an
