@@ -14,6 +14,7 @@ import { ConfigManager } from "../config/manager.js";
 import { ChatSession } from "../chat/session.js";
 import { GatewayClient } from "../gateway/client.js";
 import { MemoryStore } from "../memory/store.js";
+import { ObsidianMemory } from "../memory/obsidian-memory.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { Logger } from "../utils/logger.js";
 
@@ -120,16 +121,36 @@ class TermuxAgentCLI {
 
       const memory = options.memory ? new MemoryStore(this.config.get("memory.path")) : null;
       const gateway = new GatewayClient(this.config.getProviderConfig(options.provider));
-      const tools = options.tools ? new ToolRegistry(options.tools.split(",")) : null;
+
+      // Auto-init Obsidian RAG memory from config
+      const obsidianCfg = this.config.get<{ enabled?: boolean; vaultPath?: string }>("obsidian");
+      const vaultPath: string | undefined = obsidianCfg?.vaultPath;
+      const obsidianMemory = (obsidianCfg?.enabled !== false && vaultPath)
+        ? new ObsidianMemory(vaultPath)
+        : null;
+
+      if (obsidianMemory) {
+        this.logger.info(`Obsidian RAG vault: ${vaultPath}`);
+      }
+
+      const tools = new ToolRegistry(
+        options.tools ? options.tools.split(",") : undefined,
+        undefined,
+        { vaultPath: vaultPath ?? undefined },
+      );
 
       this.runtime = new AgentRuntime({
         config: this.config,
         gateway,
         memory,
         tools,
+        obsidianMemory,
         model: options.model,
-        systemPrompt: options.system
+        systemPrompt: options.system,
       });
+
+      // Pre-load vault context (user profile + last session) before first message
+      await this.runtime.initVaultContext();
 
       const session = new ChatSession(this.runtime);
       await session.start(message);

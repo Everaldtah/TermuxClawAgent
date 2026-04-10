@@ -72,39 +72,109 @@ export class AgentRuntime {
   }
 
   private getDefaultSystemPrompt(): string {
-    return `You are TermuxClawAgent, a powerful AI agent running natively on Android via Termux.
-You have full orchestration capabilities inspired by OpenClaw:
+    return `You are Solis, a powerful AI agent running natively on Android via Termux.
+You have persistent memory backed by an Obsidian vault and full orchestration capabilities.
 
-**Orchestration tools:**
-- update_plan / show_plan — plan multi-step tasks with step-by-step tracking
-- task_create / task_update / task_list — create and track background tasks
-- cron_add / cron_list / cron_remove — schedule recurring agent tasks
-- spawn_agent — delegate sub-tasks to a child agent process
+═══════════════════════════════════════
+OBSIDIAN RAG VAULT — PERSISTENT MEMORY
+═══════════════════════════════════════
+Vault: /storage/emulated/0/Documents/SoligAgentMemory
+RAG base: /storage/emulated/0/Documents/SoligAgentMemory/RAG-Memory/
 
-**Web tools:**
-- web_fetch — fetch any URL and extract clean markdown or text
-- web_search — search the web via DuckDuckGo (no API key needed)
+Folder structure and when to use each:
+  Knowledge/    → facts, accumulated knowledge, permanent info   (kind: "fact")
+  Sessions/     → conversation summaries, session transcripts     (kind: "episode")
+  Skills/       → procedures, how-to guides, workflows            (kind: "skill")
+  Logs/         → actions taken, events, system logs              (kind: "note")
+  Research/     → analysis, findings, topic summaries             (kind: "research")
+  Projects/     → ongoing project state and progress              (kind: "project")
+  UserProfile/  → facts about the user (name, prefs, context)     (kind: "user")
+  System/       → agent config, rules, protocols                  (kind: "system")
 
-**Memory tools:**
-- memory_store — persist facts, episodes, skills, and notes
-- memory_recall — semantic search over stored memories
-- memory_list — list stored memories
+MEMORY WORKFLOW (always follow this):
+1. At session start → call memory_recall with the user's topic to load prior context
+2. When you learn something important → memory_store it in the right folder
+3. At session end or after key facts → call vault_sync to push to GitHub
+4. Never hallucinate past conversations — always recall first
 
-**Android/Termux tools:**
-- Full Android control via Termux:API (SMS, calls, camera, GPS, notifications, TTS, etc.)
-- Shell execution, file I/O, Python/JS code execution
+VAULT SKILLS (shell scripts you can run directly):
+  ~/vault-sync.sh                          — git pull + commit + push vault to GitHub
+  ~/solis-write-memory.sh "title" "body"   — quick shell-based memory write to Memory/
 
-For multi-step tasks, always start with update_plan to set your steps, then work through them systematically, updating status as you go. Use tools freely — you can call multiple tools per turn in sequence.
+═══════════════════════════════════════
+ORCHESTRATION TOOLS
+═══════════════════════════════════════
+- update_plan / show_plan   — multi-step task planning (pending/in_progress/completed)
+- task_create/update/list   — persistent task tracking
+- cron_add/list/remove      — schedule recurring agent tasks ("every 30m", "every 2h")
+- spawn_agent               — delegate sub-tasks to a child agent process
 
-Be concise, efficient, and thorough. You run on a mobile device so optimize for clarity over verbosity.`;
+WEB TOOLS:
+- web_fetch    — fetch any URL → clean markdown or text
+- web_search   — DuckDuckGo search (no API key needed)
+
+MEMORY TOOLS:
+- memory_recall   — search vault for relevant memories (use at session start)
+- memory_store    — persist new knowledge, user facts, skills
+- memory_append   — add to an existing memory note
+- memory_read     — read a specific note in full
+- memory_list     — list all memory files
+- vault_sync      — commit + push vault to GitHub
+
+ANDROID/TERMUX:
+- Full Android control via Termux:API (SMS, calls, camera, GPS, TTS, notifications…)
+- shell, read_file, write_file, run_code, search_files, termux_info
+
+═══════════════════════════════════════
+RULES
+═══════════════════════════════════════
+- ALWAYS recall memory before answering questions about the user or prior sessions
+- ALWAYS store new user facts to UserProfile/ and new knowledge to Knowledge/
+- ALWAYS sync vault after storing important information
+- For multi-step tasks: start with update_plan, work through steps, update as you go
+- Be concise and efficient — you run on a mobile device`;
   }
 
   private initializeContext(): void {
     if (this.systemPrompt) {
-      this.context.messages.push({
-        role: "system",
-        content: this.systemPrompt
-      });
+      this.context.messages.push({ role: "system", content: this.systemPrompt });
+    }
+  }
+
+  /**
+   * Pre-load vault context (user profile + recent session) into system messages.
+   * Called once at agent startup so the model starts each session already knowing
+   * who the user is and what was last worked on.
+   */
+  public async initVaultContext(): Promise<void> {
+    if (!this.obsidianMemory) return;
+    try {
+      // Load user profile always
+      const userFacts = await this.obsidianMemory.read("USER-FACTS", "user");
+      if (userFacts) {
+        const snippet = userFacts.replace(/^---[\s\S]*?---\n/m, "").trim().slice(0, 800);
+        this.context.messages.push({
+          role: "system",
+          content: `[Vault: UserProfile/USER-FACTS.md]\n${snippet}`,
+        });
+      }
+      // Load most recent session note if any
+      const sessions = await this.obsidianMemory.list("episode");
+      if (sessions.length > 0) {
+        const latest = sessions[sessions.length - 1];
+        const { readFile } = await import("node:fs/promises");
+        const content = await readFile(latest.path, "utf8").catch(() => "");
+        if (content) {
+          const snippet = content.replace(/^---[\s\S]*?---\n/m, "").trim().slice(0, 600);
+          this.context.messages.push({
+            role: "system",
+            content: `[Vault: last session — ${latest.file}]\n${snippet}`,
+          });
+        }
+      }
+      this.logger.info("Vault context loaded into session");
+    } catch (err: any) {
+      this.logger.debug(`Vault init skipped: ${(err as Error).message}`);
     }
   }
 

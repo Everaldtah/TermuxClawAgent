@@ -480,9 +480,11 @@ export function getSpawnAgentTool(): ToolDefinition {
   };
 }
 
-// ─── Memory Tools (Obsidian-backed) ───────────────────────────────────────────
+// ─── Memory Tools (Obsidian RAG vault) ───────────────────────────────────────
 
 import { ObsidianMemory } from "../memory/obsidian-memory.js";
+
+const VAULT_KINDS = ["fact", "episode", "skill", "note", "research", "project", "user", "system"] as const;
 
 export function getMemoryTools(vaultPath?: string): ToolDefinition[] {
   const vault = vaultPath ?? join(homedir(), ".termux-agent", "vault");
@@ -491,52 +493,130 @@ export function getMemoryTools(vaultPath?: string): ToolDefinition[] {
   return [
     {
       name: "memory_store",
-      description: "Store a fact, episode, skill, or note into persistent memory.",
+      description: `Store information into the persistent Obsidian RAG vault.
+Vault: ${vault}/RAG-Memory/
+Folder mapping:
+  fact      → Knowledge/    (facts, user info, permanent knowledge)
+  episode   → Sessions/     (conversation summaries, events)
+  skill     → Skills/       (how to do things, procedures)
+  note      → Logs/         (actions taken, events logged)
+  research  → Research/     (analysis, findings, summaries)
+  project   → Projects/     (ongoing project state)
+  user      → UserProfile/  (facts about the user)
+  system    → System/       (agent config, rules)
+After storing important memories, call vault_sync to persist to GitHub.`,
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Memory title (used as filename)." },
-          content: { type: "string", description: "Memory content (markdown supported)." },
-          kind: { type: "string", enum: ["fact", "episode", "skill", "note"], description: "Memory type (default: note)." },
+          title: { type: "string", description: "Memory title (becomes the filename)." },
+          content: { type: "string", description: "Memory content in markdown." },
+          kind: {
+            type: "string",
+            enum: VAULT_KINDS,
+            description: "Memory category. Use 'fact' for knowledge, 'user' for user info, 'episode' for session summaries, 'skill' for procedures.",
+          },
         },
         required: ["title", "content"],
       },
       enabled: true,
       handler: async (args: { title: string; content: string; kind?: any }) => {
-        await mem.store(args.title, args.content, args.kind ?? "note");
-        return { stored: true, title: args.title, kind: args.kind ?? "note" };
+        const path = await mem.store(args.title, args.content, args.kind ?? "note");
+        return { stored: true, title: args.title, kind: args.kind ?? "note", path };
+      },
+    },
+    {
+      name: "memory_append",
+      description: "Append new content to an existing memory note (creates it if missing).",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          content: { type: "string" },
+          kind: { type: "string", enum: VAULT_KINDS },
+        },
+        required: ["title", "content"],
+      },
+      enabled: true,
+      handler: async (args: { title: string; content: string; kind?: any }) => {
+        await mem.append(args.title, args.content, args.kind ?? "note");
+        return { appended: true, title: args.title };
       },
     },
     {
       name: "memory_recall",
-      description: "Search persistent memory for relevant information.",
+      description: `Search the Obsidian RAG vault for relevant memories. Searches across all folders (Knowledge, Sessions, Skills, Logs, Research, Projects, UserProfile, System). Use this at the start of conversations to recall context about the user and prior work.`,
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query." },
-          top_k: { type: "number", description: "Max results (default: 5)." },
+          query: { type: "string", description: "Search query — keywords or phrases." },
+          top_k: { type: "number", description: "Max results to return (default: 6)." },
         },
         required: ["query"],
       },
       enabled: true,
       handler: async (args: { query: string; top_k?: number }) => {
-        const hits = await mem.recall(args.query, args.top_k ?? 5);
+        const hits = await mem.recall(args.query, args.top_k ?? 6);
         return { results: hits, count: hits.length };
       },
     },
     {
-      name: "memory_list",
-      description: "List all stored memories, optionally by kind.",
+      name: "memory_read",
+      description: "Read the full content of a specific memory note by title and kind.",
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["fact", "episode", "skill", "note"] },
+          title: { type: "string" },
+          kind: { type: "string", enum: VAULT_KINDS },
+        },
+        required: ["title", "kind"],
+      },
+      enabled: true,
+      handler: async (args: { title: string; kind: any }) => {
+        const content = await mem.read(args.title, args.kind);
+        if (!content) return { found: false };
+        return { found: true, content };
+      },
+    },
+    {
+      name: "memory_list",
+      description: "List all stored memories in the vault, optionally filtered by kind.",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: VAULT_KINDS, description: "Filter by memory kind (omit for all)." },
         },
       },
       enabled: true,
       handler: async (args: { kind?: any }) => {
         const files = await mem.list(args.kind);
         return { files, count: files.length };
+      },
+    },
+    {
+      name: "vault_sync",
+      description: `Sync the Obsidian vault to GitHub using ~/vault-sync.sh. Run this after storing important memories to persist them across sessions and devices. Script: ~/vault-sync.sh`,
+      parameters: {
+        type: "object",
+        properties: {
+          message: { type: "string", description: "Optional commit message (default: auto-generated timestamp)." },
+        },
+      },
+      enabled: true,
+      handler: async (args: { message?: string }) => {
+        const syncScript = join(homedir(), "vault-sync.sh");
+        if (!existsSync(syncScript)) {
+          return { synced: false, error: `Sync script not found at ${syncScript}. Run the vault setup first.` };
+        }
+        try {
+          const { stdout, stderr } = await execFileAsync("bash", [syncScript], {
+            encoding: "utf8",
+            timeout: 60_000,
+            env: { ...process.env, COMMIT_MSG: args.message ?? "" },
+          });
+          return { synced: true, output: stdout.trim(), stderr: stderr.trim() || undefined };
+        } catch (err: any) {
+          return { synced: false, error: (err as Error).message, output: err.stdout ?? "" };
+        }
       },
     },
   ];
