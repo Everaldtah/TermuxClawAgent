@@ -4,9 +4,9 @@
  */
 
 import { ConfigManager } from "./config/manager.js";
-import { GatewayClient, CompletionRequest, CompletionResponse } from "./gateway/client.js";
+import { GatewayClient, CompletionRequest } from "./gateway/client.js";
 import { MemoryStore } from "./memory/store.js";
-import { ToolRegistry, ToolCall, ToolResult } from "./tools/registry.js";
+import { ToolRegistry, ToolCall } from "./tools/registry.js";
 import { Logger } from "./utils/logger.js";
 import { TokenOptimizer } from "./utils/token-optimizer.js";
 import { ObsidianMemory } from "./memory/obsidian-memory.js";
@@ -72,9 +72,31 @@ export class AgentRuntime {
   }
 
   private getDefaultSystemPrompt(): string {
-    return `You are TermuxAgent, a helpful AI assistant running on Android via Termux.
-You are optimized for mobile environments with limited resources.
-Be concise, efficient, and helpful. Use markdown for formatting when appropriate.`;
+    return `You are TermuxClawAgent, a powerful AI agent running natively on Android via Termux.
+You have full orchestration capabilities inspired by OpenClaw:
+
+**Orchestration tools:**
+- update_plan / show_plan — plan multi-step tasks with step-by-step tracking
+- task_create / task_update / task_list — create and track background tasks
+- cron_add / cron_list / cron_remove — schedule recurring agent tasks
+- spawn_agent — delegate sub-tasks to a child agent process
+
+**Web tools:**
+- web_fetch — fetch any URL and extract clean markdown or text
+- web_search — search the web via DuckDuckGo (no API key needed)
+
+**Memory tools:**
+- memory_store — persist facts, episodes, skills, and notes
+- memory_recall — semantic search over stored memories
+- memory_list — list stored memories
+
+**Android/Termux tools:**
+- Full Android control via Termux:API (SMS, calls, camera, GPS, notifications, TTS, etc.)
+- Shell execution, file I/O, Python/JS code execution
+
+For multi-step tasks, always start with update_plan to set your steps, then work through them systematically, updating status as you go. Use tools freely — you can call multiple tools per turn in sequence.
+
+Be concise, efficient, and thorough. You run on a mobile device so optimize for clarity over verbosity.`;
   }
 
   private initializeContext(): void {
@@ -132,7 +154,8 @@ Be concise, efficient, and helpful. Use markdown for formatting when appropriate
     if (this.obsidianMemory) {
       try {
         const hits = await this.obsidianMemory.recall(userInput, 5);
-        const block = TokenOptimizer.buildRagContext(hits);
+        const ragHits = hits.map(h => ({ note: h.title, snippet: h.content }));
+        const block = TokenOptimizer.buildRagContext(ragHits);
         if (block) this.context.messages.push({ role: "system", content: block });
       } catch (err: any) {
         this.logger.debug(`Obsidian recall skipped: ${err.message}`);
@@ -156,22 +179,46 @@ Be concise, efficient, and helpful. Use markdown for formatting when appropriate
       request.tools = this.tools.getToolSchemas();
     }
 
-    // Call gateway
+    // Agentic loop: keep calling tools until the model stops requesting them
     this.logger.debug(`Calling ${this.context.model}...`);
-    const response = await this.gateway.complete(request);
+    const MAX_TOOL_ROUNDS = 20;
+    let round = 0;
 
-    // Handle tool calls if present
-    if (response.tool_calls && this.tools) {
-      return await this.handleToolCalls(response);
+    while (round < MAX_TOOL_ROUNDS) {
+      const response = await this.gateway.complete(request);
+
+      if (!response.tool_calls || response.tool_calls.length === 0 || !this.tools) {
+        // Final response — no more tool calls
+        this.addMessage({ role: "assistant", content: response.content });
+        return response.content;
+      }
+
+      // Add assistant turn with tool calls
+      this.addMessage({ role: "assistant", content: response.content, tool_calls: response.tool_calls });
+
+      // Execute all tool calls in this round
+      for (const call of response.tool_calls) {
+        this.logger.info(`Tool call [${round + 1}]: ${call.function.name}`);
+        try {
+          const result = await this.tools.execute(call);
+          this.addMessage({ role: "tool", content: JSON.stringify(result.output), name: call.function.name });
+        } catch (err: any) {
+          this.addMessage({ role: "tool", content: JSON.stringify({ error: err.message }), name: call.function.name });
+        }
+      }
+
+      // Rebuild request with updated context for next round
+      request.messages = this.context.messages;
+      round++;
     }
 
-    // Add assistant response to context
-    this.addMessage({
-      role: "assistant",
-      content: response.content
-    });
-
-    return response.content;
+    // Safety: if we hit max rounds, ask model for final answer
+    this.logger.warn("Max tool rounds reached, requesting final answer");
+    request.tools = undefined;
+    request.messages = this.context.messages;
+    const final = await this.gateway.complete(request);
+    this.addMessage({ role: "assistant", content: final.content });
+    return final.content;
   }
 
   /**
@@ -199,65 +246,6 @@ Be concise, efficient, and helpful. Use markdown for formatting when appropriate
       role: "assistant",
       content: fullContent
     });
-  }
-
-  /**
-   * Handle tool calls from the model
-   */
-  private async handleToolCalls(response: CompletionResponse): Promise<string> {
-    if (!response.tool_calls || !this.tools) {
-      return response.content;
-    }
-
-    // Add assistant message with tool calls
-    this.addMessage({
-      role: "assistant",
-      content: response.content,
-      tool_calls: response.tool_calls
-    });
-
-    // Execute each tool call
-    const results: ToolResult[] = [];
-    
-    for (const call of response.tool_calls) {
-      this.logger.info(`Executing tool: ${call.function.name}`);
-      
-      try {
-        const result = await this.tools.execute(call);
-        results.push(result);
-        
-        // Add tool response to context
-        this.addMessage({
-          role: "tool",
-          content: JSON.stringify(result.output),
-          name: call.function.name
-        });
-      } catch (err) {
-        this.logger.error(`Tool execution failed: ${err.message}`);
-        this.addMessage({
-          role: "tool",
-          content: JSON.stringify({ error: err.message }),
-          name: call.function.name
-        });
-      }
-    }
-
-    // Get final response from model with tool results
-    const followUpRequest: CompletionRequest = {
-      model: this.context.model,
-      messages: this.context.messages,
-      temperature: this.context.temperature,
-      max_tokens: this.context.maxTokens,
-      stream: false
-    };
-
-    const followUp = await this.gateway.complete(followUpRequest);
-    this.addMessage({
-      role: "assistant",
-      content: followUp.content
-    });
-
-    return followUp.content;
   }
 
   /**

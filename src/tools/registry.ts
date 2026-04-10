@@ -3,13 +3,13 @@
  * Token-optimized, built-in tools for Android/Termux
  */
 
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile, access, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { Logger } from "../utils/logger.js";
+import { getOrchestrationTools } from "./orchestration.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,14 +50,24 @@ export class ToolRegistry {
   private logger: Logger;
   private timeout: number;
 
-  constructor(enabledTools?: string[], timeout: number = 30000) {
+  constructor(enabledTools?: string[], timeout: number = 30000, orchestrationOpts?: { vaultPath?: string; onCronTrigger?: (job: any) => void }) {
     this.tools = new Map();
     this.logger = new Logger("Tools");
     this.timeout = timeout;
     this.registerBuiltInTools();
-    
+    this.registerOrchestrationTools(orchestrationOpts);
+
     if (enabledTools) {
       this.setEnabledTools(enabledTools);
+    }
+  }
+
+  /**
+   * Register OpenClaw-inspired orchestration tools
+   */
+  private registerOrchestrationTools(opts?: { vaultPath?: string; onCronTrigger?: (job: any) => void }): void {
+    for (const tool of getOrchestrationTools(opts)) {
+      this.register(tool);
     }
   }
 
@@ -281,12 +291,12 @@ export class ToolRegistry {
         output,
         duration: Date.now() - startTime
       };
-    } catch (err) {
+    } catch (err: unknown) {
       return {
         callId: call.id,
         name: call.function.name,
         output: null,
-        error: err.message,
+        error: (err as Error).message,
         duration: Date.now() - startTime
       };
     }

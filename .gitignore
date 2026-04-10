@@ -42,8 +42,8 @@ pids/
 # Config (user-specific)
 config.local.json
 
-# Memory storage (user data)
-memory/
+# Memory storage (user data - runtime only, not source)
+~/.termux-agent/memory.json
 *.memory.json
 
 # Temporary files

@@ -10,15 +10,6 @@ import { Logger } from "./logger.js";
 
 const logger = new Logger("Setup");
 
-interface SetupAnswers {
-  provider: string;
-  apiKey: string;
-  model: string;
-  temperature: number;
-  enableMemory: boolean;
-  enableTools: boolean;
-}
-
 /**
  * Run interactive setup wizard
  */
@@ -146,8 +137,8 @@ export async function runInteractiveSetup(): Promise<void> {
       } else {
         console.log("⚠️  Could not validate API key. Please check your settings.");
       }
-    } catch (err) {
-      console.log(`⚠️  Validation error: ${err.message}`);
+    } catch (err: unknown) {
+      console.log(`⚠️  Validation error: ${(err as Error).message}`);
     }
 
     console.log("\n✅ Setup complete!");
@@ -157,9 +148,9 @@ export async function runInteractiveSetup(): Promise<void> {
     console.log("  termux-agent ask      - Ask a single question");
     console.log("  termux-agent status   - Check status\n");
 
-  } catch (err) {
+  } catch (err: unknown) {
     rl.close();
-    logger.error(`Setup failed: ${err.message}`);
+    logger.error(`Setup failed: ${(err as Error).message}`);
     throw err;
   }
 }

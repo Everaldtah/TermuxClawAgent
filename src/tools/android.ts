@@ -18,11 +18,12 @@ const logger = new Logger("Android");
 
 async function run(cmd: string, args: string[] = [], input?: string): Promise<any> {
   try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, {
+    const result = await execFileAsync(cmd, args, {
       encoding: "utf8",
       timeout: 30000,
       input
-    } as any);
+    } as any) as unknown as { stdout: string; stderr: string };
+    const { stdout, stderr } = result;
     const out = (stdout || "").trim();
     try { return JSON.parse(out); } catch { return out || stderr || "ok"; }
   } catch (err: any) {

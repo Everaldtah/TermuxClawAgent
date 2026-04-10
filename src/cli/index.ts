@@ -5,7 +5,6 @@
  */
 
 import { Command } from "commander";
-import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,8 +30,8 @@ const BANNER = `
 
 class TermuxAgentCLI {
   private program: Command;
-  private runtime: AgentRuntime;
-  private config: ConfigManager;
+  private runtime!: AgentRuntime;
+  private config!: ConfigManager;
   private logger: Logger;
 
   constructor() {
@@ -134,8 +133,8 @@ class TermuxAgentCLI {
 
       const session = new ChatSession(this.runtime);
       await session.start(message);
-    } catch (err) {
-      this.logger.error(`Chat failed: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`Chat failed: ${(err as Error).message}`);
       process.exit(1);
     }
   }
@@ -156,8 +155,8 @@ class TermuxAgentCLI {
       });
 
       console.log(response.content);
-    } catch (err) {
-      this.logger.error(`Request failed: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`Request failed: ${(err as Error).message}`);
       process.exit(1);
     }
   }

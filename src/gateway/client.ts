@@ -156,7 +156,7 @@ export class GatewayClient {
       if (data.expires_in) oauth.expiresAt = now + data.expires_in * 1000;
       this.logger.debug("OAuth access token refreshed");
     } catch (err: any) {
-      this.logger.warn(`OAuth refresh error: ${err.message}`);
+      this.logger.warn(`OAuth refresh error: ${(err as Error).message}`);
     }
   }
 
@@ -218,7 +218,7 @@ export class GatewayClient {
       throw new Error(`API error (${response.status}): ${error}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as Record<string, any>;
     const choice = data.choices[0];
 
     return {
@@ -338,7 +338,7 @@ export class GatewayClient {
       throw new Error(`Anthropic API error (${response.status}): ${error}`);
     }
 
-    const data = await response.json();
+    const data = await response.json() as Record<string, any>;
     
     return {
       content: data.content?.[0]?.text || "",
@@ -468,7 +468,7 @@ export class GatewayClient {
         return [];
       }
 
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
       return data.data?.map((m: any) => m.id) || [];
     } catch {
       return [];

@@ -233,27 +233,9 @@ Shortcuts:
         console.log(`\x1b[90m[${context.messages.length} msgs | ${elapsed}ms]\x1b[0m\n`);
       }
 
-    } catch (err) {
-      console.error(`\x1b[31mError: ${err.message}\x1b[0m\n`);
-      this.logger.error(`Message processing failed: ${err.message}`);
-    }
-  }
-
-  /**
-   * Stream a response (for future use)
-   */
-  private async streamResponse(message: string): Promise<void> {
-    try {
-      console.log();
-      process.stdout.write("🤔 ");
-
-      for await (const chunk of this.runtime.executeStream(message)) {
-        process.stdout.write(chunk);
-      }
-
-      console.log("\n");
-    } catch (err) {
-      console.error(`\x1b[31mError: ${err.message}\x1b[0m\n`);
+    } catch (err: unknown) {
+      console.error(`\x1b[31mError: ${(err as Error).message}\x1b[0m\n`);
+      this.logger.error(`Message processing failed: ${(err as Error).message}`);
     }
   }
 
@@ -273,8 +255,8 @@ Shortcuts:
       await writeFile(filepath, data, "utf8");
       
       console.log(`💾 Saved to ${filepath}`);
-    } catch (err) {
-      console.log(`❌ Save failed: ${err.message}`);
+    } catch (err: unknown) {
+      console.log(`❌ Save failed: ${(err as Error).message}`);
     }
   }
 
@@ -296,8 +278,8 @@ Shortcuts:
       messages.forEach((m: any) => this.runtime.addMessage(m));
       
       console.log(`📂 Loaded ${messages.length} messages from ${filepath}`);
-    } catch (err) {
-      console.log(`❌ Load failed: ${err.message}`);
+    } catch (err: unknown) {
+      console.log(`❌ Load failed: ${(err as Error).message}`);
     }
   }
 

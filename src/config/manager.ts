@@ -3,7 +3,7 @@
  * Token-optimized, file-based configuration
  */
 
-import { readFile, writeFile, mkdir, access } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -181,8 +181,8 @@ export class ConfigManager {
         await this.save();
         this.logger.info(`Created config at ${CONFIG_PATH}`);
       }
-    } catch (err) {
-      this.logger.error(`Failed to init config: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`Failed to init config: ${(err as Error).message}`);
       throw err;
     }
   }
@@ -207,8 +207,8 @@ export class ConfigManager {
       
       this.logger.debug("Config loaded successfully");
       return this.config;
-    } catch (err) {
-      this.logger.error(`Failed to load config: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`Failed to load config: ${(err as Error).message}`);
       return this.config;
     }
   }
@@ -221,8 +221,8 @@ export class ConfigManager {
       await mkdir(dirname(CONFIG_PATH), { recursive: true });
       await writeFile(CONFIG_PATH, JSON.stringify(this.config, null, 2), "utf8");
       this.logger.debug("Config saved");
-    } catch (err) {
-      this.logger.error(`Failed to save config: ${err.message}`);
+    } catch (err: unknown) {
+      this.logger.error(`Failed to save config: ${(err as Error).message}`);
       throw err;
     }
   }
@@ -274,12 +274,13 @@ export class ConfigManager {
    */
   public getProviderConfig(providerName?: string): ProviderConfig {
     const name = providerName || this.config.provider.default;
-    const provider = this.config.provider[name as keyof typeof this.config.provider];
-    
+    const raw = (this.config.provider as Record<string, ProviderConfig | string | undefined>)[name];
+    const provider: ProviderConfig | undefined = typeof raw === "object" ? raw : undefined;
+
     if (!provider) {
       throw new Error(`Provider '${name}' not configured`);
     }
-    
+
     return provider;
   }
 
@@ -287,7 +288,7 @@ export class ConfigManager {
    * Add or update a provider
    */
   public async setProvider(name: string, config: ProviderConfig): Promise<void> {
-    this.config.provider[name as keyof typeof this.config.provider] = config;
+    (this.config.provider as Record<string, ProviderConfig>)[name] = config;
     await this.save();
   }
 
@@ -374,9 +375,10 @@ export class ConfigManager {
     
     // Check required fields
     const defaultProvider = this.config.provider.default;
-    const providerConfig = this.config.provider[defaultProvider as keyof typeof this.config.provider];
-    
-    if (!providerConfig?.apiKey) {
+    const providerConfig = (this.config.provider as Record<string, ProviderConfig | string | undefined>)[defaultProvider ?? ""];
+    const providerObj = typeof providerConfig === "object" ? providerConfig : undefined;
+
+    if (!providerObj?.apiKey) {
       errors.push(`API key not set for provider: ${defaultProvider}`);
     }
     
