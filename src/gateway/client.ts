@@ -61,6 +61,71 @@ export interface ProviderConfig {
   headers?: Record<string, string>;
 }
 
+// ─── Resilient fetch: timeout + retry with exponential backoff ────────────────
+
+const DEFAULT_TIMEOUT_MS = 120_000; // 2 min — NIM reasoning models can be slow
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 2_000;
+
+// Transient network errors worth retrying
+const RETRYABLE_CODES = new Set([
+  "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "ENOTFOUND",
+  "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
+]);
+
+function isRetryable(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? "";
+  const code: string = (err as any)?.cause?.code ?? (err as any)?.code ?? "";
+  return (
+    RETRYABLE_CODES.has(code) ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("fetch failed") ||
+    msg.includes("timed out")
+  );
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`Request timed out after ${timeoutMs / 1000}s`)),
+    timeoutMs,
+  );
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  logger: Logger,
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fetchWithTimeout(url, init, timeoutMs);
+    } catch (err: unknown) {
+      lastErr = err;
+      const isLast = attempt === MAX_RETRIES;
+      if (!isRetryable(err) || isLast) break;
+      const delay = RETRY_BASE_MS * 2 ** attempt;
+      logger.warn(
+        `Network error (${(err as Error).message}), retrying in ${delay / 1000}s… [${attempt + 1}/${MAX_RETRIES}]`,
+      );
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  // Wrap raw ETIMEDOUT etc. with a friendlier message
+  const msg = (lastErr as Error)?.message ?? String(lastErr);
+  throw new Error(`Agent network error after ${MAX_RETRIES} retries: ${msg}`);
+}
+
+// ─── GatewayClient ────────────────────────────────────────────────────────────
+
 /**
  * Gateway client for LLM API communication
  */
@@ -68,11 +133,13 @@ export class GatewayClient {
   private config: ProviderConfig;
   private logger: Logger;
   private baseUrl: string;
+  private timeoutMs: number;
 
-  constructor(config: ProviderConfig) {
+  constructor(config: ProviderConfig, timeoutMs = DEFAULT_TIMEOUT_MS) {
     this.config = config;
     this.logger = new Logger("Gateway");
     this.baseUrl = config.baseUrl || this.getDefaultBaseUrl(config.name);
+    this.timeoutMs = timeoutMs;
   }
 
   private getDefaultBaseUrl(provider: string): string {
@@ -84,39 +151,26 @@ export class GatewayClient {
       openrouter: "https://openrouter.ai/api/v1",
       groq: "https://api.groq.com/openai/v1",
       gemini: "https://generativelanguage.googleapis.com/v1",
-      // NVIDIA NIM / build.nvidia.com — OpenAI-compatible.
       nvidia: "https://integrate.api.nvidia.com/v1",
-      // Moonshot Kimi — OpenAI-compatible.
       kimi: "https://api.moonshot.cn/v1",
-      // MiniMax — OpenAI-compatible chat completions endpoint.
-      minimax: "https://api.minimax.chat/v1"
+      minimax: "https://api.minimax.chat/v1",
     };
     return urls[provider] || urls.openai;
   }
 
   /**
-   * Return the best auth header pair for this provider. OAuth access
-   * tokens (when present and unexpired) take precedence over static API
-   * keys. Anthropic uses a custom `x-api-key` header instead of bearer.
+   * Return auth headers. OAuth access tokens take precedence over API keys.
    */
   private async getAuthHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-    // Merge any static provider-level headers first (e.g. NVIDIA NIM org,
-    // MiniMax GroupId) so callers can add anything providers require.
     if (this.config.headers) Object.assign(headers, this.config.headers);
 
-    // Prefer OAuth if configured and valid.
     const oauth = this.config.oauth;
     if (oauth?.accessToken) {
       await this.maybeRefreshOAuth();
       headers["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
       return headers;
     }
-
-    // Anthropic uses x-api-key (not bearer). Set elsewhere in completeAnthropic,
-    // but if someone calls through the OpenAI path with an Anthropic key we
-    // still fall through to bearer below.
     if (this.config.apiKey) {
       headers["Authorization"] = `Bearer ${this.config.apiKey}`;
     }
@@ -124,9 +178,7 @@ export class GatewayClient {
   }
 
   /**
-   * Refresh the OAuth access token if it is expired or about to expire.
-   * Uses the standard `refresh_token` grant — works for Anthropic Console
-   * OAuth, Google/Gemini OAuth, and any RFC-6749 provider.
+   * Refresh OAuth access token if expired or close to expiry.
    */
   private async maybeRefreshOAuth(): Promise<void> {
     const oauth = this.config.oauth;
@@ -139,48 +191,37 @@ export class GatewayClient {
         grant_type: "refresh_token",
         refresh_token: oauth.refreshToken,
         ...(oauth.clientId ? { client_id: oauth.clientId } : {}),
-        ...(oauth.clientSecret ? { client_secret: oauth.clientSecret } : {})
+        ...(oauth.clientSecret ? { client_secret: oauth.clientSecret } : {}),
       });
-      const res = await fetch(oauth.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body
-      });
+      const res = await fetchWithTimeout(
+        oauth.tokenUrl,
+        { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body },
+        30_000,
+      );
       if (!res.ok) {
-        this.logger.warn(`OAuth refresh failed (${res.status}) — falling back to existing token`);
+        this.logger.warn(`OAuth refresh failed (${res.status}) — keeping existing token`);
         return;
       }
       const data: any = await res.json();
       oauth.accessToken = data.access_token || oauth.accessToken;
       if (data.refresh_token) oauth.refreshToken = data.refresh_token;
       if (data.expires_in) oauth.expiresAt = now + data.expires_in * 1000;
-      this.logger.debug("OAuth access token refreshed");
-    } catch (err: any) {
+      this.logger.debug("OAuth token refreshed");
+    } catch (err: unknown) {
       this.logger.warn(`OAuth refresh error: ${(err as Error).message}`);
     }
   }
 
-  /**
-   * Make a completion request (non-streaming)
-   */
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
   public async complete(request: CompletionRequest): Promise<CompletionResponse> {
     const provider = this.detectProvider(request.model);
-    
-    switch (provider) {
-      case "anthropic":
-        return this.completeAnthropic(request);
-      case "openai":
-      default:
-        return this.completeOpenAI(request);
-    }
+    if (provider === "anthropic") return this.completeAnthropic(request);
+    return this.completeOpenAI(request);
   }
 
-  /**
-   * Make a streaming completion request
-   */
   public async *completeStream(request: CompletionRequest): AsyncGenerator<string, void, unknown> {
     const provider = this.detectProvider(request.model);
-    
     if (provider === "anthropic") {
       yield* this.streamAnthropic(request);
     } else {
@@ -188,33 +229,32 @@ export class GatewayClient {
     }
   }
 
-  /**
-   * OpenAI-compatible API completion
-   */
+  // ─── OpenAI-compatible ───────────────────────────────────────────────────────
+
   private async completeOpenAI(request: CompletionRequest): Promise<CompletionResponse> {
     const url = `${this.baseUrl}/chat/completions`;
-    
     const maxTok = request.max_tokens ?? 4096;
+
     const body: any = {
       model: request.model,
       messages: request.messages,
       temperature: request.temperature ?? 0.7,
-      // NVIDIA NIM accepts both; send both for compatibility across providers.
+      // Send both — NVIDIA NIM uses max_completion_tokens; others use max_tokens.
       max_tokens: maxTok,
       max_completion_tokens: maxTok,
-      stream: false
+      stream: false,
     };
-
     if (request.tools?.length) {
       body.tools = request.tools;
       body.tool_choice = "auto";
     }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: await this.getAuthHeaders(),
-      body: JSON.stringify(body)
-    });
+    const response = await fetchWithRetry(
+      url,
+      { method: "POST", headers: await this.getAuthHeaders(), body: JSON.stringify(body) },
+      this.timeoutMs,
+      this.logger,
+    );
 
     if (!response.ok) {
       const error = await response.text();
@@ -222,66 +262,64 @@ export class GatewayClient {
     }
 
     const data = await response.json() as Record<string, any>;
-    const choice = data.choices[0];
+    const choice = data.choices?.[0];
 
     if (!choice) {
-      this.logger.error(`NIM/OpenAI response missing choices: ${JSON.stringify(data)}`);
-      throw new Error(`Empty response from ${this.config.name}: no choices in response`);
+      this.logger.error(`No choices in response from ${this.config.name}: ${JSON.stringify(data)}`);
+      throw new Error(`Empty response from ${this.config.name}: no choices returned`);
     }
 
     const msg = choice.message ?? {};
 
-    // Resolve content — handles three cases seen with NVIDIA NIM reasoning models:
+    // Handle content in three forms seen across NIM / OpenAI-compat providers:
     // 1. Plain string (standard)
-    // 2. null/empty with text in reasoning_content (Kimi K2, DeepSeek-R1 on NIM)
-    // 3. Content as array of blocks [{type:"text",text:"..."}] (some NIM variants)
+    // 2. Array of content blocks [{type:"text",text:"..."}]
+    // 3. null — reasoning models (Kimi K2, DeepSeek-R1) put text in reasoning_content
     let content: string;
     if (Array.isArray(msg.content)) {
-      content = msg.content
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => b.text ?? "")
+      content = (msg.content as any[])
+        .filter(b => b.type === "text")
+        .map(b => b.text ?? "")
         .join("");
     } else {
       content = msg.content ?? "";
     }
 
-    // Reasoning models (Kimi K2, DeepSeek-R1) put the actual answer in
-    // reasoning_content when content is empty. Fall back to it.
     if (!content && msg.reasoning_content) {
-      content = msg.reasoning_content;
+      content = msg.reasoning_content as string;
     }
 
     if (!content && choice.finish_reason !== "tool_calls") {
-      this.logger.error(`Empty content from ${this.config.name}. Full response: ${JSON.stringify(data)}`);
+      this.logger.error(
+        `Empty content from ${this.config.name} (finish_reason=${choice.finish_reason}). ` +
+        `Raw: ${JSON.stringify(data)}`,
+      );
     }
 
     return {
       content,
       model: data.model ?? request.model,
       usage: data.usage,
-      tool_calls: msg.tool_calls
+      tool_calls: msg.tool_calls,
     };
   }
 
-  /**
-   * OpenAI-compatible streaming
-   */
   private async *streamOpenAI(request: CompletionRequest): AsyncGenerator<string, void, unknown> {
     const url = `${this.baseUrl}/chat/completions`;
-    
     const body = {
       model: request.model,
       messages: request.messages,
       temperature: request.temperature ?? 0.7,
       max_tokens: request.max_tokens ?? 4096,
-      stream: true
+      stream: true,
     };
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: await this.getAuthHeaders(),
-      body: JSON.stringify(body)
-    });
+    const response = await fetchWithRetry(
+      url,
+      { method: "POST", headers: await this.getAuthHeaders(), body: JSON.stringify(body) },
+      this.timeoutMs,
+      this.logger,
+    );
 
     if (!response.ok) {
       const error = await response.text();
@@ -306,18 +344,16 @@ export class GatewayClient {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || !trimmed.startsWith("data: ")) continue;
-          
-          const data = trimmed.slice(6);
-          if (data === "[DONE]") return;
-
+          const chunk = trimmed.slice(6);
+          if (chunk === "[DONE]") return;
           try {
-            const parsed = JSON.parse(data);
+            const parsed = JSON.parse(chunk);
             const delta = parsed.choices?.[0]?.delta;
-            // Standard content delta
-            const chunk = delta?.content ?? delta?.reasoning_content ?? "";
-            if (chunk) yield chunk;
+            // Yield standard content or reasoning_content fallback
+            const text: string = delta?.content ?? delta?.reasoning_content ?? "";
+            if (text) yield text;
           } catch {
-            // Ignore parse errors for malformed chunks
+            // ignore malformed SSE chunks
           }
         }
       }
@@ -326,13 +362,10 @@ export class GatewayClient {
     }
   }
 
-  /**
-   * Anthropic API completion
-   */
+  // ─── Anthropic ───────────────────────────────────────────────────────────────
+
   private async completeAnthropic(request: CompletionRequest): Promise<CompletionResponse> {
     const url = `${this.baseUrl}/messages`;
-    
-    // Convert messages to Anthropic format
     const systemMessage = request.messages.find(m => m.role === "system");
     const otherMessages = request.messages.filter(m => m.role !== "system");
 
@@ -340,34 +373,31 @@ export class GatewayClient {
       model: request.model,
       messages: otherMessages.map(m => ({
         role: m.role === "user" ? "user" : "assistant",
-        content: m.content
+        content: m.content,
       })),
       temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens ?? 4096
+      max_tokens: request.max_tokens ?? 4096,
     };
+    if (systemMessage) body.system = systemMessage.content;
 
-    if (systemMessage) {
-      body.system = systemMessage.content;
-    }
-
-    // Anthropic: prefer OAuth bearer when provided (Console OAuth), else x-api-key.
-    const anthropicHeaders: Record<string, string> = {
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
-      ...(this.config.headers || {})
+      ...(this.config.headers || {}),
     };
     if (this.config.oauth?.accessToken) {
       await this.maybeRefreshOAuth();
-      anthropicHeaders["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
+      headers["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
     } else {
-      anthropicHeaders["x-api-key"] = this.config.apiKey;
+      headers["x-api-key"] = this.config.apiKey;
     }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: anthropicHeaders,
-      body: JSON.stringify(body)
-    });
+    const response = await fetchWithRetry(
+      url,
+      { method: "POST", headers, body: JSON.stringify(body) },
+      this.timeoutMs,
+      this.logger,
+    );
 
     if (!response.ok) {
       const error = await response.text();
@@ -375,24 +405,19 @@ export class GatewayClient {
     }
 
     const data = await response.json() as Record<string, any>;
-    
     return {
       content: data.content?.[0]?.text || "",
       model: data.model,
       usage: {
         prompt_tokens: data.usage?.input_tokens || 0,
         completion_tokens: data.usage?.output_tokens || 0,
-        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
-      }
+        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
+      },
     };
   }
 
-  /**
-   * Anthropic streaming
-   */
   private async *streamAnthropic(request: CompletionRequest): AsyncGenerator<string, void, unknown> {
     const url = `${this.baseUrl}/messages`;
-    
     const systemMessage = request.messages.find(m => m.role === "system");
     const otherMessages = request.messages.filter(m => m.role !== "system");
 
@@ -400,35 +425,32 @@ export class GatewayClient {
       model: request.model,
       messages: otherMessages.map(m => ({
         role: m.role === "user" ? "user" : "assistant",
-        content: m.content
+        content: m.content,
       })),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.max_tokens ?? 4096,
-      stream: true
+      stream: true,
     };
+    if (systemMessage) body.system = systemMessage.content;
 
-    if (systemMessage) {
-      body.system = systemMessage.content;
-    }
-
-    // Anthropic: prefer OAuth bearer when provided (Console OAuth), else x-api-key.
-    const anthropicHeaders: Record<string, string> = {
+    const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "anthropic-version": "2023-06-01",
-      ...(this.config.headers || {})
+      ...(this.config.headers || {}),
     };
     if (this.config.oauth?.accessToken) {
       await this.maybeRefreshOAuth();
-      anthropicHeaders["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
+      headers["Authorization"] = `Bearer ${this.config.oauth!.accessToken}`;
     } else {
-      anthropicHeaders["x-api-key"] = this.config.apiKey;
+      headers["x-api-key"] = this.config.apiKey;
     }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: anthropicHeaders,
-      body: JSON.stringify(body)
-    });
+    const response = await fetchWithRetry(
+      url,
+      { method: "POST", headers, body: JSON.stringify(body) },
+      this.timeoutMs,
+      this.logger,
+    );
 
     if (!response.ok) {
       const error = await response.text();
@@ -453,15 +475,14 @@ export class GatewayClient {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed.startsWith("data: ")) continue;
-          
-          const data = trimmed.slice(6);
+          const chunk = trimmed.slice(6);
           try {
-            const parsed = JSON.parse(data);
+            const parsed = JSON.parse(chunk);
             if (parsed.type === "content_block_delta") {
               yield parsed.delta?.text || "";
             }
           } catch {
-            // Ignore parse errors
+            // ignore malformed chunks
           }
         }
       }
@@ -470,40 +491,27 @@ export class GatewayClient {
     }
   }
 
-  /**
-   * Detect provider from model name
-   */
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+
   private detectProvider(model: string): string {
-    // Explicit provider set on the config wins over model-name sniffing —
-    // essential for NVIDIA/Kimi/MiniMax whose models have generic names.
     const explicit = this.config.name;
     if (["nvidia", "kimi", "minimax", "groq", "openrouter", "lmstudio", "ollama"].includes(explicit)) {
-      return "openai"; // all OpenAI-compatible — use the openai path
+      return "openai";
     }
     if (model.startsWith("claude-") || explicit === "anthropic") return "anthropic";
     if (model.startsWith("gemini-") || explicit === "gemini") return "gemini";
-    if (model.startsWith("moonshot") || model.startsWith("kimi")) return "openai";
-    if (model.startsWith("abab") || model.startsWith("MiniMax")) return "openai";
-    if (model.includes("llama") || model.includes("mixtral")) return "openai";
     return "openai";
   }
 
-  /**
-   * List available models (if supported)
-   */
   public async listModels(): Promise<string[]> {
     try {
       const url = `${this.baseUrl}/models`;
-      const response = await fetch(url, {
-        headers: {
-          "Authorization": `Bearer ${this.config.apiKey}`
-        }
-      });
-
-      if (!response.ok) {
-        return [];
-      }
-
+      const response = await fetchWithTimeout(
+        url,
+        { headers: { "Authorization": `Bearer ${this.config.apiKey}` } },
+        15_000,
+      );
+      if (!response.ok) return [];
       const data = await response.json() as Record<string, any>;
       return data.data?.map((m: any) => m.id) || [];
     } catch {
@@ -511,15 +519,12 @@ export class GatewayClient {
     }
   }
 
-  /**
-   * Validate API key
-   */
   public async validate(): Promise<boolean> {
     try {
       await this.complete({
         model: this.config.defaultModel || "gpt-4o-mini",
         messages: [{ role: "user", content: "Hi" }],
-        max_tokens: 5
+        max_tokens: 5,
       });
       return true;
     } catch {
