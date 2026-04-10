@@ -402,14 +402,27 @@ function httpsPost(url, body, headers = {}, timeoutMs = 30000) {
         ...headers
       }
     }, (res) => {
+      const statusCode = res.statusCode ?? 0;
       let raw = "";
       res.on("data", c => raw += c);
       res.on("end", () => {
         if (settled) return;
         settled = true;
         clearTimeout(wallTimer);
-        try { resolve(JSON.parse(raw)); }
-        catch { resolve(raw); }
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { parsed = raw; }
+        // Treat HTTP errors as rejections so the retry layer can handle them
+        if (statusCode === 429) {
+          const retryAfter = res.headers["retry-after"];
+          const err = new Error(`rate_limited${retryAfter ? `:${retryAfter}` : ""}`);
+          err.code = "RATE_LIMITED";
+          err.retryAfter = retryAfter ? parseInt(retryAfter, 10) * 1000 : null;
+          return reject(err);
+        }
+        if (statusCode >= 500) {
+          return reject(new Error(`NIM server error ${statusCode}: ${typeof parsed === "string" ? parsed.slice(0,200) : JSON.stringify(parsed).slice(0,200)}`));
+        }
+        resolve(parsed);
       });
       res.on("error", (e) => {
         if (settled) return;
@@ -433,7 +446,7 @@ function httpsPost(url, body, headers = {}, timeoutMs = 30000) {
 }
 
 // Retryable error codes from Android TCP layer
-const RETRYABLE = new Set(["ETIMEDOUT","ECONNRESET","ECONNREFUSED","ENOTFOUND","EAI_AGAIN","EPIPE"]);
+const RETRYABLE = new Set(["ETIMEDOUT","ECONNRESET","ECONNREFUSED","ENOTFOUND","EAI_AGAIN","EPIPE","RATE_LIMITED"]);
 function isRetryable(err) {
   const msg = err?.message ?? "";
   const code = err?.code ?? "";
@@ -448,12 +461,13 @@ async function httpsPostWithRetry(url, body, headers = {}, timeoutMs = 30000, ma
     } catch (err) {
       lastErr = err;
       if (!isRetryable(err) || attempt === maxRetries) break;
-      const delay = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
+      // Honour Retry-After for 429, else exponential back-off (2s, 4s, 8s)
+      const delay = err.retryAfter ?? (2000 * Math.pow(2, attempt));
       console.warn(`  ⚠ NIM error (${err.message}), retry ${attempt + 1}/${maxRetries} in ${delay/1000}s…`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
-  throw new Error(`NIM request failed after ${maxRetries} retries: ${lastErr?.message}`);
+  throw lastErr ?? new Error("NIM request failed");
 }
 
 function httpsGet(url, timeoutMs = 35000) {
@@ -636,10 +650,14 @@ async function poll() {
       } catch (err) {
         stopTyping();
         console.error(`  ✗ Agent error: ${err.message}`);
-        const isTimeout = /ETIMEDOUT|timed out|ECONNRESET/i.test(err.message);
-        const userMsg = isTimeout
-          ? `⏱ NIM timed out (slow model/network). Try a shorter request or send again.`
-          : `❌ Agent error: ${err.message}`;
+        let userMsg;
+        if (err.code === "RATE_LIMITED" || /rate_limited/i.test(err.message)) {
+          userMsg = `⏳ NVIDIA API rate limit hit. Wait a minute and try again.`;
+        } else if (/ETIMEDOUT|timed out|ECONNRESET/i.test(err.message)) {
+          userMsg = `⏱ NIM timed out (model is slow). Try a shorter request or send again.`;
+        } else {
+          userMsg = `❌ Agent error: ${err.message}`;
+        }
         await sendMessage(chatId, userMsg);
       }
     }
