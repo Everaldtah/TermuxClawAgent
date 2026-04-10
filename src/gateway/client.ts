@@ -194,11 +194,14 @@ export class GatewayClient {
   private async completeOpenAI(request: CompletionRequest): Promise<CompletionResponse> {
     const url = `${this.baseUrl}/chat/completions`;
     
+    const maxTok = request.max_tokens ?? 4096;
     const body: any = {
       model: request.model,
       messages: request.messages,
       temperature: request.temperature ?? 0.7,
-      max_tokens: request.max_tokens ?? 4096,
+      // NVIDIA NIM accepts both; send both for compatibility across providers.
+      max_tokens: maxTok,
+      max_completion_tokens: maxTok,
       stream: false
     };
 
@@ -221,11 +224,42 @@ export class GatewayClient {
     const data = await response.json() as Record<string, any>;
     const choice = data.choices[0];
 
+    if (!choice) {
+      this.logger.error(`NIM/OpenAI response missing choices: ${JSON.stringify(data)}`);
+      throw new Error(`Empty response from ${this.config.name}: no choices in response`);
+    }
+
+    const msg = choice.message ?? {};
+
+    // Resolve content — handles three cases seen with NVIDIA NIM reasoning models:
+    // 1. Plain string (standard)
+    // 2. null/empty with text in reasoning_content (Kimi K2, DeepSeek-R1 on NIM)
+    // 3. Content as array of blocks [{type:"text",text:"..."}] (some NIM variants)
+    let content: string;
+    if (Array.isArray(msg.content)) {
+      content = msg.content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text ?? "")
+        .join("");
+    } else {
+      content = msg.content ?? "";
+    }
+
+    // Reasoning models (Kimi K2, DeepSeek-R1) put the actual answer in
+    // reasoning_content when content is empty. Fall back to it.
+    if (!content && msg.reasoning_content) {
+      content = msg.reasoning_content;
+    }
+
+    if (!content && choice.finish_reason !== "tool_calls") {
+      this.logger.error(`Empty content from ${this.config.name}. Full response: ${JSON.stringify(data)}`);
+    }
+
     return {
-      content: choice.message?.content || "",
-      model: data.model,
+      content,
+      model: data.model ?? request.model,
       usage: data.usage,
-      tool_calls: choice.message?.tool_calls
+      tool_calls: msg.tool_calls
     };
   }
 
@@ -278,8 +312,10 @@ export class GatewayClient {
 
           try {
             const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) yield content;
+            const delta = parsed.choices?.[0]?.delta;
+            // Standard content delta
+            const chunk = delta?.content ?? delta?.reasoning_content ?? "";
+            if (chunk) yield chunk;
           } catch {
             // Ignore parse errors for malformed chunks
           }
