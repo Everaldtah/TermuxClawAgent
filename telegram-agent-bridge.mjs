@@ -22,7 +22,7 @@ const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const MODEL = "moonshotai/kimi-k2.5";
 const NVIDIA_TIMEOUT_MS = 300_000; // 5 min — Kimi-K2.5 thinking mode can be slow
 const MAX_TOOL_ROUNDS = 8;        // prevent infinite loops
-const VAULT_PATH = join(homedir(), ".termux-agent", "vault");
+const VAULT_PATH = "/storage/emulated/0/Documents/SoligAgentMemory";
 const SESSIONS_PATH = join(homedir(), ".termux-agent", "sessions");
 
 const TG_BASE = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
@@ -201,8 +201,52 @@ const TOOLS = [
         required: ["url"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "vault_sync",
+      description: "Manually commit and push all pending vault changes to GitHub. Called automatically after obsidian_write/append, but can be triggered explicitly to force an immediate sync.",
+      parameters: { type: "object", properties: {}, required: [] }
+    }
   }
 ];
+
+// ── Vault → GitHub auto-sync ──────────────────────────────────────────────────
+
+let _syncTimer = null;
+const _pendingFiles = new Set();
+
+function vaultSync(notePath) {
+  // Collect files written in the same agent round, push once after 3s quiet period
+  if (notePath) _pendingFiles.add(notePath);
+  if (_syncTimer) clearTimeout(_syncTimer);
+  return new Promise((resolve) => {
+    _syncTimer = setTimeout(async () => {
+      _syncTimer = null;
+      const label = [..._pendingFiles].join(", ").slice(0, 120);
+      _pendingFiles.clear();
+      try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const run = promisify(execFile);
+        const git = (args) => run("git", args, { cwd: VAULT_PATH });
+        await git(["add", "-A"]);
+        // Only commit if there's actually something staged
+        const { stdout: diff } = await git(["diff", "--cached", "--name-only"]);
+        if (!diff.trim()) { resolve({ skipped: true }); return; }
+        const msg = `${new Date().toISOString().slice(0, 16)} — ${label || "vault update"}`;
+        await git(["commit", "-m", msg]);
+        await git(["push", "origin", "main"]);
+        console.log(`  📤 Vault synced to GitHub: ${msg}`);
+        resolve({ synced: true, message: msg });
+      } catch (err) {
+        console.error(`  ⚠ Vault sync failed: ${err.message}`);
+        resolve({ error: err.message });
+      }
+    }, 3000);
+  });
+}
 
 // ── Tool executors ────────────────────────────────────────────────────────────
 
@@ -266,6 +310,7 @@ async function execTool(name, args) {
         const p = join(VAULT_PATH, args.note_path);
         mkdirSync(dirname(p), { recursive: true });
         writeFileSync(p, args.content, "utf8");
+        vaultSync(args.note_path).catch(() => {});
         return { success: true, note_path: args.note_path };
       }
 
@@ -273,6 +318,7 @@ async function execTool(name, args) {
         const p = join(VAULT_PATH, args.note_path);
         mkdirSync(dirname(p), { recursive: true });
         await appendFile(p, "\n" + args.content, "utf8");
+        vaultSync(args.note_path).catch(() => {});
         return { success: true, note_path: args.note_path };
       }
 
@@ -326,6 +372,11 @@ async function execTool(name, args) {
             r.on("end", () => res({ status: r.statusCode, body: body.slice(0, 5000) }));
           }).on("error", e => res({ error: e.message }));
         });
+      }
+
+      case "vault_sync": {
+        const result = await vaultSync();
+        return result;
       }
 
       default:
@@ -493,13 +544,33 @@ async function sendMessage(chatId, text) {
   for (const chunk of chunks) {
     let res = await httpsPost(`${TG_BASE}/sendMessage`, {
       chat_id: chatId, text: chunk, parse_mode: "Markdown"
-    });
+    }).catch(() => null);
     if (!res?.ok) {
-      // Fallback: strip markdown and retry
-      res = await httpsPost(`${TG_BASE}/sendMessage`, { chat_id: chatId, text: chunk });
+      res = await httpsPost(`${TG_BASE}/sendMessage`, { chat_id: chatId, text: chunk }).catch(() => null);
     }
     if (!res?.ok) console.error("sendMessage failed:", res?.description);
   }
+}
+
+async function sendStatusMessage(chatId, text) {
+  const res = await httpsPost(`${TG_BASE}/sendMessage`, {
+    chat_id: chatId, text, parse_mode: "Markdown"
+  }).catch(() => null);
+  return res?.result?.message_id ?? null;
+}
+
+async function editStatusMessage(chatId, messageId, text) {
+  if (!messageId) return;
+  await httpsPost(`${TG_BASE}/editMessageText`, {
+    chat_id: chatId, message_id: messageId, text, parse_mode: "Markdown"
+  }).catch(() => {});
+}
+
+async function deleteMessage(chatId, messageId) {
+  if (!messageId) return;
+  await httpsPost(`${TG_BASE}/deleteMessage`, {
+    chat_id: chatId, message_id: messageId
+  }).catch(() => {});
 }
 
 function startTyping(chatId) {
@@ -512,15 +583,64 @@ function startTyping(chatId) {
 
 // ── NVIDIA NIM agentic loop ───────────────────────────────────────────────────
 
+// ── Live stream helper ────────────────────────────────────────────────────────
+// Keeps one Telegram message updated with a scrolling log of tool activity.
+// Throttled to 1 edit/s to stay under Telegram rate limits.
+
+function makeStreamer(chatId) {
+  let msgId = null;
+  let lines = [];
+  let lastEdit = 0;
+  let pending = false;
+
+  const render = () => {
+    const body = lines.slice(-18).join("\n");   // show last 18 lines
+    return `\`\`\`\n${body}\n\`\`\``;
+  };
+
+  const flush = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastEdit < 1100) {
+      if (!pending) {
+        pending = true;
+        setTimeout(() => { pending = false; flush(true); }, 1200);
+      }
+      return;
+    }
+    lastEdit = now;
+    if (msgId) {
+      await editStatusMessage(chatId, msgId, render());
+    } else {
+      const r = await httpsPost(`${TG_BASE}/sendMessage`, {
+        chat_id: chatId, text: render(), parse_mode: "Markdown"
+      }).catch(() => null);
+      msgId = r?.result?.message_id ?? null;
+    }
+  };
+
+  return {
+    push: async (line) => { lines.push(line); await flush(); },
+    finish: async () => { await flush(true); },
+    delete: async () => { if (msgId) await deleteMessage(chatId, msgId); },
+    getMsgId: () => msgId,
+  };
+}
+
+// ── NVIDIA NIM agentic loop ───────────────────────────────────────────────────
+
 async function runAgent(chatId, userText) {
   const history = getHistory(chatId);
   history.push({ role: "user", content: userText });
 
-  // Build messages with system prompt (not stored in history)
   const getMessages = () => [
     { role: "system", content: SYSTEM_PROMPT },
-    ...history.slice(-40)   // keep last 40 for context
+    ...history.slice(-40)
   ];
+
+  const stream = makeStreamer(chatId);
+  await stream.push(`🤖 Solis — ${new Date().toLocaleTimeString()}`);
+  await stream.push(`💬 "${userText.slice(0, 60)}${userText.length > 60 ? "…" : ""}"`);
+  await stream.push("─".repeat(30));
 
   let round = 0;
   let finalContent = null;
@@ -528,85 +648,121 @@ async function runAgent(chatId, userText) {
   while (round < MAX_TOOL_ROUNDS) {
     round++;
     console.log(`  → NIM call round ${round}`);
-
-    const body = {
-      model: MODEL,
-      messages: getMessages(),
-      max_tokens: 16384,
-      temperature: 1.0,
-      top_p: 1.0,
-      stream: false,
-      tools: TOOLS,
-      tool_choice: "auto",
-      chat_template_kwargs: { thinking: true }
-    };
+    await stream.push(`▶ [R${round}] calling model...`);
 
     const res = await httpsPostWithRetry(
       `${NVIDIA_BASE_URL}/chat/completions`,
-      body,
+      {
+        model: MODEL,
+        messages: getMessages(),
+        max_tokens: 16384,
+        temperature: 1.0,
+        top_p: 1.0,
+        stream: false,
+        tools: TOOLS,
+        tool_choice: "auto",
+        chat_template_kwargs: { thinking: true }
+      },
       { Authorization: `Bearer ${NVIDIA_API_KEY}` },
       NVIDIA_TIMEOUT_MS,
       3
     );
 
     if (res?.error) throw new Error(res.error.message || JSON.stringify(res.error));
-
     const choice = res?.choices?.[0];
     if (!choice) throw new Error("Empty response from NVIDIA NIM");
 
     const msg = choice.message;
     const toolCalls = msg?.tool_calls;
 
-    // No tool calls → final answer
     if (!toolCalls || toolCalls.length === 0) {
       finalContent = msg?.content || msg?.reasoning_content || msg?.reasoning || "";
-      history.push({ role: "assistant", content: finalContent });
+      if (!finalContent) {
+        await stream.push(`⚠ empty reply — requesting summary`);
+        history.push({ role: "assistant", content: "" });
+        history.push({ role: "user", content: "Please summarize what you just did and provide your response." });
+        const sr = await httpsPostWithRetry(
+          `${NVIDIA_BASE_URL}/chat/completions`,
+          { model: MODEL, messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history.slice(-40)], max_tokens: 4096, temperature: 1.0, top_p: 1.0, stream: false },
+          { Authorization: `Bearer ${NVIDIA_API_KEY}` },
+          NVIDIA_TIMEOUT_MS, 2
+        );
+        const sm = sr?.choices?.[0]?.message;
+        finalContent = sm?.content || sm?.reasoning_content || sm?.reasoning || "";
+        history.push({ role: "assistant", content: finalContent });
+      } else {
+        history.push({ role: "assistant", content: finalContent });
+      }
       break;
     }
 
-    // Add assistant message with tool calls to history
     history.push({ role: "assistant", content: msg.content || "", tool_calls: toolCalls });
 
-    // Execute each tool call
     for (const tc of toolCalls) {
       const fnName = tc.function?.name;
       let fnArgs = {};
       try { fnArgs = JSON.parse(tc.function?.arguments || "{}"); } catch {}
 
+      // Show what's being called with key argument
+      const keyArg = fnArgs.command || fnArgs.path || fnArgs.note_path || fnArgs.url || fnArgs.query || "";
+      await stream.push(`🔧 ${fnName}${keyArg ? `(${keyArg.slice(0, 50)})` : ""}`);
+
       const result = await execTool(fnName, fnArgs);
       const resultStr = JSON.stringify(result);
       console.log(`  ← Tool result: ${resultStr.slice(0, 200)}`);
 
-      history.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        name: fnName,
-        content: resultStr
-      });
+      // Show meaningful output: prefer stdout for shell, content for files
+      const out = result.stdout ?? result.content ?? result.error ?? resultStr;
+      const outClean = String(out).replace(/\n+/g, " ").trim();
+      await stream.push(`   ↳ ${outClean.slice(0, 100)}${outClean.length > 100 ? "…" : ""}`);
+
+      history.push({ role: "tool", tool_call_id: tc.id, name: fnName, content: resultStr });
     }
 
-    // Loop back to get model's response to tool results
+    if (round === MAX_TOOL_ROUNDS) {
+      await stream.push(`⚠ round limit — forcing summary`);
+      history.push({ role: "user", content: "You've reached the tool call limit. Please summarize everything you've done and provide your final answer now." });
+      const fr = await httpsPostWithRetry(
+        `${NVIDIA_BASE_URL}/chat/completions`,
+        { model: MODEL, messages: [{ role: "system", content: SYSTEM_PROMPT }, ...history.slice(-40)], max_tokens: 8192, temperature: 1.0, top_p: 1.0, stream: false },
+        { Authorization: `Bearer ${NVIDIA_API_KEY}` },
+        NVIDIA_TIMEOUT_MS, 2
+      );
+      const fm = fr?.choices?.[0]?.message;
+      finalContent = fm?.content || fm?.reasoning_content || fm?.reasoning || "";
+      history.push({ role: "assistant", content: finalContent });
+    }
   }
 
   if (!finalContent) {
-    finalContent = "I completed the task but had no text to return.";
+    finalContent = "⚠️ Task completed but no summary was generated.";
     history.push({ role: "assistant", content: finalContent });
   }
 
-  // Persist session to disk
-  saveSession(chatId, history);
+  await stream.push("─".repeat(30));
+  await stream.push(`✅ done`);
+  await stream.finish();
 
+  saveSession(chatId, history);
   return finalContent.trim();
 }
 
 // ── Main polling loop ─────────────────────────────────────────────────────────
 
 let offset = 0;
+let pollBackoff = 0;       // ms to wait between polls on network failure
+let pollErrCount = 0;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function poll() {
   try {
     const data = await httpsGet(`${TG_BASE}/getUpdates?timeout=20&offset=${offset}`, 25000);
     if (!data?.ok || !Array.isArray(data.result)) return;
+
+    // Successful poll — reset backoff
+    pollErrCount = 0;
+    pollBackoff = 0;
 
     for (const update of data.result) {
       offset = update.update_id + 1;
@@ -621,7 +777,7 @@ async function poll() {
 
       if (text === "/start") {
         await sendMessage(chatId,
-          `✅ *Solis* online!\n\nModel: \`${MODEL}\`\nMemory: persistent across sessions\nTools: shell, file, obsidian vault, http\n\nSend any message to begin.\n/reset — clear history\n/memory — show vault notes`
+          `✅ *Solis* online!\n\nModel: \`${MODEL}\`\nTools: shell, file, obsidian vault, http\nStreaming: live tool feed enabled\n\n/reset — clear history\n/memory — show vault notes`
         );
         continue;
       }
@@ -630,14 +786,14 @@ async function poll() {
         histories.delete(chatId);
         const f = sessionFile(chatId);
         if (existsSync(f)) writeFileSync(f, "[]", "utf8");
-        await sendMessage(chatId, "🗑️ Session history cleared.");
+        await sendMessage(chatId, "🗑️ Session cleared.");
         continue;
       }
 
       if (text === "/memory") {
         const result = await execTool("obsidian_list", {});
         const list = result.entries?.join("\n") || "(empty)";
-        await sendMessage(chatId, `📒 *Vault contents:*\n\`\`\`\n${list}\n\`\`\``);
+        await sendMessage(chatId, `📒 *Vault:*\n\`\`\`\n${list}\n\`\`\``);
         continue;
       }
 
@@ -652,17 +808,20 @@ async function poll() {
         console.error(`  ✗ Agent error: ${err.message}`);
         let userMsg;
         if (err.code === "RATE_LIMITED" || /rate_limited/i.test(err.message)) {
-          userMsg = `⏳ NVIDIA API rate limit hit. Wait a minute and try again.`;
+          userMsg = `⏳ Rate limited — wait a minute and retry.`;
         } else if (/ETIMEDOUT|timed out|ECONNRESET/i.test(err.message)) {
-          userMsg = `⏱ NIM timed out (model is slow). Try a shorter request or send again.`;
+          userMsg = `⏱ NIM timed out. Try a shorter request.`;
         } else {
-          userMsg = `❌ Agent error: ${err.message}`;
+          userMsg = `❌ ${err.message}`;
         }
-        await sendMessage(chatId, userMsg);
+        await sendMessage(chatId, userMsg).catch(() => {});
       }
     }
   } catch (err) {
-    console.error("Poll error:", err.message);
+    pollErrCount++;
+    // Exponential back-off: 2s → 4s → 8s → 16s → 30s cap
+    pollBackoff = Math.min(30000, 2000 * Math.pow(2, pollErrCount - 1));
+    console.error(`Poll error (${pollErrCount}): ${err.message} — retry in ${pollBackoff/1000}s`);
   }
 }
 
@@ -679,12 +838,24 @@ async function main() {
   console.log(`   Vault    : ${VAULT_PATH}`);
   console.log(`   Sessions : ${SESSIONS_PATH}`);
 
-  const me = await httpsGet(`${TG_BASE}/getMe`);
-  if (!me?.ok) { console.error("❌ Bad bot token"); process.exit(1); }
+  // Retry getMe until network is up (handles cold boot before WiFi connects)
+  let me;
+  for (let i = 0; ; i++) {
+    try {
+      me = await httpsGet(`${TG_BASE}/getMe`);
+      if (me?.ok) break;
+    } catch {}
+    const wait = Math.min(30000, 3000 * Math.pow(2, i));
+    console.log(`   Telegram not reachable — retry in ${wait/1000}s`);
+    await sleep(wait);
+  }
   console.log(`   Bot      : @${me.result.username}`);
   console.log("\n✅ Listening...\n");
 
-  while (true) await poll();
+  while (true) {
+    await poll();
+    if (pollBackoff > 0) await sleep(pollBackoff);
+  }
 }
 
 main().catch(err => { console.error("Fatal:", err); process.exit(1); });
