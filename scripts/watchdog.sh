@@ -2,8 +2,9 @@
 # Solis watchdog — keeps telegram-agent-bridge.mjs running forever.
 # Restarts on crash, backs off if it keeps failing fast.
 
-AGENT="$HOME/TermuxClawAgent/telegram-agent-bridge.mjs"
-LOG="$HOME/agent-bot.log"
+TERMUX_HOME="/data/data/com.termux/files/home"
+AGENT="${TERMUX_HOME}/TermuxClawAgent/telegram-agent-bridge.mjs"
+LOG="${TERMUX_HOME}/agent-bot.log"
 FAIL_COUNT=0
 LAST_START=0
 
