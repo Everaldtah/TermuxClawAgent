@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TermuxClawAgent — Solis</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 40px;
+      max-width: 480px;
+      width: 100%;
+      background: #111;
+    }
+    .dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #22c55e;
+      margin-right: 8px;
+      box-shadow: 0 0 8px #22c55e88;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    h1 { font-size: 1.5rem; color: #fff; margin-bottom: 6px; }
+    .sub { color: #666; font-size: 0.85rem; margin-bottom: 28px; }
+    .row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #1e1e1e; font-size: 0.88rem; }
+    .row:last-child { border-bottom: none; }
+    .label { color: #666; }
+    .value { color: #a3e635; }
+    .value.ok { color: #22c55e; }
+    .footer { margin-top: 28px; font-size: 0.75rem; color: #444; text-align: center; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1><span class="dot"></span>Solis — TermuxClawAgent</h1>
+    <p class="sub">Cloud agent running on Vercel • Powered by NVIDIA NIM</p>
+
+    <div class="row"><span class="label">Status</span><span class="value ok">● Online</span></div>
+    <div class="row"><span class="label">Model</span><span class="value">moonshotai/kimi-k2.6</span></div>
+    <div class="row"><span class="label">Platform</span><span class="value">Vercel Serverless</span></div>
+    <div class="row"><span class="label">Webhook</span><span class="value ok">✓ Registered</span></div>
+    <div class="row"><span class="label">Storage</span><span class="value">GitHub two-way sync</span></div>
+    <div class="row"><span class="label">Interface</span><span class="value"><a href="https://t.me/SolisTermuxclaw_bot" target="_blank">Telegram →</a></span></div>
+
+    <div class="footer">
+      <a href="https://github.com/Everaldtah/TermuxClawAgent" target="_blank">github.com/Everaldtah/TermuxClawAgent</a>
+    </div>
+  </div>
+</body>
+</html>
