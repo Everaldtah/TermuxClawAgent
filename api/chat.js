@@ -22,17 +22,31 @@ import { ghRead, ghWrite, pullSession, pushSession } from "../src/sync/github-st
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
-const NVIDIA_API_KEY    = process.env.NVIDIA_API_KEY    ?? "";
-const NVIDIA_BASE_URL   = process.env.NVIDIA_BASE_URL   ?? "https://integrate.api.nvidia.com/v1";
-const MODEL             = process.env.MODEL             ?? "moonshotai/kimi-k2.6";
+const DEFAULT_API_KEY   = process.env.NVIDIA_API_KEY    ?? "";
+const DEFAULT_BASE_URL  = process.env.NVIDIA_BASE_URL   ?? "https://integrate.api.nvidia.com/v1";
+const DEFAULT_MODEL     = process.env.MODEL             ?? "moonshotai/kimi-k2.6";
 const MAX_TOOL_ROUNDS   = parseInt(process.env.MAX_TOOL_ROUNDS   ?? "15", 10);
 const HISTORY_MAX_MSGS  = parseInt(process.env.HISTORY_MAX_MSGS  ?? "60", 10);
-const NVIDIA_TIMEOUT_MS = parseInt(process.env.NVIDIA_TIMEOUT_MS ?? "250000", 10);
+const CALL_TIMEOUT_MS   = parseInt(process.env.NVIDIA_TIMEOUT_MS ?? "250000", 10);
+
+// ── Provider registry (all OpenAI-compatible) ─────────────────────────────────
+
+const PROVIDERS = {
+  nvidia:     { baseUrl: "https://integrate.api.nvidia.com/v1",  defaultModel: "moonshotai/kimi-k2.6" },
+  openai:     { baseUrl: "https://api.openai.com/v1",            defaultModel: "gpt-4o" },
+  groq:       { baseUrl: "https://api.groq.com/openai/v1",       defaultModel: "llama-3.3-70b-versatile" },
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1",         defaultModel: "openai/gpt-4o" },
+  deepseek:   { baseUrl: "https://api.deepseek.com/v1",          defaultModel: "deepseek-chat" },
+  xai:        { baseUrl: "https://api.x.ai/v1",                  defaultModel: "grok-2" },
+  mistral:    { baseUrl: "https://api.mistral.ai/v1",            defaultModel: "mistral-large-latest" },
+  together:   { baseUrl: "https://api.together.xyz/v1",          defaultModel: "meta-llama/Llama-3-70b-chat-hf" },
+};
 
 // ── System prompt ─────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are Solis, an advanced AI agent accessible via the TermuxClawAgent web interface.
-You are powered by ${MODEL} via NVIDIA NIM, running on Vercel cloud.
+function buildSystemPrompt(model, providerName) {
+  return `You are Solis, an advanced AI agent accessible via the TermuxClawAgent web interface.
+You are powered by ${model} via ${providerName}, running on Vercel cloud.
 
 ## Identity
 - Name: Solis (TermuxClawAgent)
@@ -56,7 +70,8 @@ You are powered by ${MODEL} via NVIDIA NIM, running on Vercel cloud.
 ## Rules
 - Always use tools for real work. Never fake or simulate output.
 - After running commands, store useful results in the vault for future sessions.
-- Be concise but thorough. Use markdown.`;
+- Be concise but thorough. Use markdown.`;}
+const SYSTEM_PROMPT = buildSystemPrompt(DEFAULT_MODEL, "NVIDIA NIM");
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
 
@@ -238,21 +253,21 @@ async function execTool(name, args) {
 
 const keepAlive = new https.Agent({ keepAlive: true, keepAliveMsecs: 20_000 });
 
-function nimPost(body) {
+function llmPost(baseUrl, apiKey, body) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
-    const u = new URL(`${NVIDIA_BASE_URL}/chat/completions`);
+    const u = new URL(`${baseUrl}/chat/completions`);
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return; settled = true;
-      req.destroy(); reject(new Error(`NIM timeout after ${NVIDIA_TIMEOUT_MS / 1000}s`));
-    }, NVIDIA_TIMEOUT_MS);
+      req.destroy(); reject(new Error(`LLM timeout after ${CALL_TIMEOUT_MS / 1000}s`));
+    }, CALL_TIMEOUT_MS);
     const req = https.request({
       hostname: u.hostname, path: u.pathname, method: "POST", agent: keepAlive,
       headers: {
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(data),
-        Authorization: `Bearer ${NVIDIA_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
     }, res => {
       let raw = "";
@@ -268,10 +283,10 @@ function nimPost(body) {
   });
 }
 
-async function nimPostRetry(body, retries = 2) {
+async function llmPostRetry(baseUrl, apiKey, body, retries = 2) {
   let last;
   for (let i = 0; i <= retries; i++) {
-    try { return await nimPost(body); }
+    try { return await llmPost(baseUrl, apiKey, body); }
     catch (err) {
       last = err;
       if (i < retries) await new Promise(r => setTimeout(r, 2000 * (i + 1)));
@@ -282,9 +297,21 @@ async function nimPostRetry(body, retries = 2) {
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
-async function runAgent(userText, history, send) {
+async function runAgent(userText, history, send, providerCfg = {}) {
+  const {
+    apiKey   = DEFAULT_API_KEY,
+    baseUrl  = DEFAULT_BASE_URL,
+    model    = DEFAULT_MODEL,
+    provider = "NVIDIA NIM",
+  } = providerCfg;
+
+  const systemPrompt = buildSystemPrompt(model, provider);
+
   history.push({ role: "user", content: userText });
-  const getMessages = () => [{ role: "system", content: SYSTEM_PROMPT }, ...history.slice(-HISTORY_MAX_MSGS)];
+  const getMessages = () => [{ role: "system", content: systemPrompt }, ...history.slice(-HISTORY_MAX_MSGS)];
+
+  // Whether this provider supports NIM-style thinking params
+  const isNvidia = baseUrl.includes("nvidia") || baseUrl.includes("integrate.api");
 
   let round = 0;
   let finalContent = null;
@@ -293,8 +320,8 @@ async function runAgent(userText, history, send) {
     round++;
     send("round", { round });
 
-    const res = await nimPostRetry({
-      model: MODEL,
+    const reqBody = {
+      model,
       messages: getMessages(),
       max_tokens: 16384,
       temperature: 1.0,
@@ -302,12 +329,14 @@ async function runAgent(userText, history, send) {
       stream: false,
       tools: TOOLS,
       tool_choice: "auto",
-      chat_template_kwargs: { thinking: true },
-    });
+      ...(isNvidia ? { chat_template_kwargs: { thinking: true } } : {}),
+    };
+
+    const res = await llmPostRetry(baseUrl, apiKey, reqBody);
 
     if (res?.error) throw new Error(res.error.message || JSON.stringify(res.error));
     const choice = res?.choices?.[0];
-    if (!choice) throw new Error("Empty response from NIM");
+    if (!choice) throw new Error("Empty response from provider");
 
     const msg = choice.message;
     const toolCalls = msg?.tool_calls;
@@ -341,8 +370,8 @@ async function runAgent(userText, history, send) {
 
     if (round === MAX_TOOL_ROUNDS) {
       history.push({ role: "user", content: "Tool limit reached. Summarize and give your final answer." });
-      const fr = await nimPostRetry({
-        model: MODEL, messages: getMessages(), max_tokens: 8192, temperature: 1.0, top_p: 1.0, stream: false,
+      const fr = await llmPostRetry(baseUrl, apiKey, {
+        model, messages: getMessages(), max_tokens: 8192, temperature: 1.0, top_p: 1.0, stream: false,
       });
       const fm = fr?.choices?.[0]?.message;
       finalContent = fm?.content || fm?.reasoning_content || "";
@@ -362,8 +391,22 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).end();
 
-  const { message, sessionId } = req.body ?? {};
+  const { message, sessionId, userApiKey, userProvider, userModel } = req.body ?? {};
   if (!message?.trim() || !sessionId) return res.status(400).json({ error: "missing message or sessionId" });
+
+  // Build provider config — user key takes priority over server default
+  const providerKey = userProvider && PROVIDERS[userProvider] ? userProvider : "nvidia";
+  const providerInfo = PROVIDERS[providerKey];
+  const providerCfg = {
+    apiKey:   userApiKey?.trim() || DEFAULT_API_KEY,
+    baseUrl:  providerInfo.baseUrl,
+    model:    userModel?.trim()  || providerInfo.defaultModel,
+    provider: providerKey.charAt(0).toUpperCase() + providerKey.slice(1),
+  };
+  if (!providerCfg.apiKey) {
+    res.setHeader("Content-Type", "application/json");
+    return res.status(400).json({ error: "No API key available. Please add your own key in the API Configuration panel." });
+  }
 
   // Stream SSE
   res.setHeader("Content-Type", "text/event-stream");
@@ -380,7 +423,8 @@ export default async function handler(req, res) {
     const stored = await pullSession(webSessionKey).catch(() => null);
     const history = stored ?? [];
 
-    const { reply, history: updated } = await runAgent(message.trim(), history, send);
+    send("provider", { name: providerCfg.provider, model: providerCfg.model });
+    const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg);
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
     pushSession(webSessionKey, JSON.stringify(toSave, null, 2)).catch(() => {});

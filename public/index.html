@@ -133,6 +133,55 @@
     </div>
   </div>
 
+  <!-- API Config -->
+  <div class="card" id="api-card">
+    <div class="section-head" style="cursor:pointer" onclick="toggleApiPanel()">
+      <span class="section-title">⚙ API Configuration <span id="api-set-badge" style="display:none;font-size:0.7rem;color:#22c55e;margin-left:8px">● key set</span></span>
+      <span class="badge" id="api-chevron">▼ expand</span>
+    </div>
+    <div id="api-panel" style="display:none;padding:20px 24px;border-top:1px solid #181818">
+      <p style="color:#555;font-size:0.78rem;margin-bottom:16px;line-height:1.6">
+        Use your own API key to avoid hitting rate limits. Keys are saved in your browser only and never stored on our servers.
+        Leave blank to use the shared server key.
+      </p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">Provider</label>
+          <select id="api-provider" onchange="onProviderChange()" style="width:100%;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none">
+            <option value="nvidia">NVIDIA NIM</option>
+            <option value="openai">OpenAI</option>
+            <option value="groq">Groq</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="xai">xAI (Grok)</option>
+            <option value="mistral">Mistral</option>
+            <option value="together">Together AI</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">Model <span style="color:#333">(optional override)</span></label>
+          <input id="api-model" type="text" placeholder="use provider default" style="width:100%;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#232323'" />
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">API Key</label>
+        <div style="display:flex;gap:8px">
+          <input id="api-key" type="password" placeholder="Paste your API key here…" style="flex:1;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#232323'" />
+          <button onclick="toggleKeyVisibility()" style="background:#141414;border:1px solid #222;border-radius:7px;color:#555;padding:0 12px;cursor:pointer;font-size:0.8rem;flex-shrink:0" id="eye-btn">show</button>
+        </div>
+      </div>
+
+      <div id="provider-hint" style="background:#0d1117;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;font-size:0.74rem;color:#475569;margin-bottom:14px;line-height:1.6"></div>
+
+      <div style="display:flex;gap:8px">
+        <button onclick="saveApiConfig()" style="background:#1e3a5f;color:#bfdbfe;border:none;border-radius:7px;padding:8px 18px;font-family:inherit;font-size:0.82rem;cursor:pointer">Save</button>
+        <button onclick="clearApiConfig()" style="background:#0e0e0e;color:#555;border:1px solid #222;border-radius:7px;padding:8px 18px;font-family:inherit;font-size:0.82rem;cursor:pointer">Clear</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Chat -->
   <div class="card">
     <div class="section-head">
@@ -175,6 +224,87 @@
 </div>
 
 <script>
+// ── API config panel ──────────────────────────────────────────────────────────
+
+const PROVIDER_HINTS = {
+  nvidia:     'Get a key at <a href="https://build.nvidia.com" target="_blank">build.nvidia.com</a> → free tier available. Default model: moonshotai/kimi-k2.6',
+  openai:     'Get a key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>. Default model: gpt-4o',
+  groq:       'Get a free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a> — very fast inference. Default model: llama-3.3-70b-versatile',
+  openrouter: 'Get a key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> — access 200+ models. Default model: openai/gpt-4o',
+  deepseek:   'Get a key at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> — very affordable. Default model: deepseek-chat',
+  xai:        'Get a key at <a href="https://console.x.ai" target="_blank">console.x.ai</a>. Default model: grok-2',
+  mistral:    'Get a key at <a href="https://console.mistral.ai" target="_blank">console.mistral.ai</a>. Default model: mistral-large-latest',
+  together:   'Get a key at <a href="https://api.together.xyz" target="_blank">api.together.xyz</a> — open source models. Default model: Llama-3-70b',
+};
+
+function toggleApiPanel() {
+  const panel = document.getElementById('api-panel');
+  const chevron = document.getElementById('api-chevron');
+  const open = panel.style.display === 'block';
+  panel.style.display = open ? 'none' : 'block';
+  chevron.textContent = open ? '▼ expand' : '▲ collapse';
+  if (!open) onProviderChange();
+}
+
+function onProviderChange() {
+  const p = document.getElementById('api-provider').value;
+  document.getElementById('provider-hint').innerHTML = PROVIDER_HINTS[p] || '';
+}
+
+function toggleKeyVisibility() {
+  const inp = document.getElementById('api-key');
+  const btn = document.getElementById('eye-btn');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? 'show' : 'hide';
+}
+
+function saveApiConfig() {
+  const key      = document.getElementById('api-key').value.trim();
+  const provider = document.getElementById('api-provider').value;
+  const model    = document.getElementById('api-model').value.trim();
+  if (key) localStorage.setItem('solis_api_key', key);
+  localStorage.setItem('solis_provider', provider);
+  if (model) localStorage.setItem('solis_model', model);
+  else localStorage.removeItem('solis_model');
+  updateApiBadge();
+  toggleApiPanel();
+}
+
+function clearApiConfig() {
+  localStorage.removeItem('solis_api_key');
+  localStorage.removeItem('solis_provider');
+  localStorage.removeItem('solis_model');
+  document.getElementById('api-key').value = '';
+  document.getElementById('api-model').value = '';
+  document.getElementById('api-provider').value = 'nvidia';
+  updateApiBadge();
+}
+
+function updateApiBadge() {
+  const key = localStorage.getItem('solis_api_key');
+  const badge = document.getElementById('api-set-badge');
+  badge.style.display = key ? 'inline' : 'none';
+}
+
+function getApiConfig() {
+  return {
+    userApiKey:  localStorage.getItem('solis_api_key')  || undefined,
+    userProvider:localStorage.getItem('solis_provider') || undefined,
+    userModel:   localStorage.getItem('solis_model')    || undefined,
+  };
+}
+
+// Restore saved config on load
+(function restoreApiConfig() {
+  const k = localStorage.getItem('solis_api_key');
+  const p = localStorage.getItem('solis_provider');
+  const m = localStorage.getItem('solis_model');
+  if (k) document.getElementById('api-key').value = k;
+  if (p) document.getElementById('api-provider').value = p;
+  if (m) document.getElementById('api-model').value = m;
+  updateApiBadge();
+})();
+
 // ── Session ───────────────────────────────────────────────────────────────────
 
 function getSessionId() {
@@ -306,7 +436,7 @@ async function sendMessage() {
     const res = await fetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionId: getSessionId() }),
+      body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -328,7 +458,9 @@ async function sendMessage() {
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
-        if (evt.type === 'round') {
+        if (evt.type === 'provider') {
+          appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}</div>`);
+        } else if (evt.type === 'round') {
           currentRound = evt.round;
           appendFeed(`<div class="tf-round">── Round ${currentRound} ──</div>`);
         } else if (evt.type === 'thinking') {
