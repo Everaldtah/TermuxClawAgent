@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "",
+  "installCommand": "npm install --ignore-scripts",
   "functions": {
     "api/webhook.js": {
       "maxDuration": 300
