@@ -14,7 +14,22 @@
  */
 
 import https from "node:https";
-import { ghRead, ghWrite, pushSession, pullSession, pushVault, pullVault } from "../src/sync/github-storage.mjs";
+import { ghRead, ghWrite, pushSession, pullSession } from "../src/sync/github-storage.mjs";
+
+// ── Activity log (written to GitHub after each run, read by /api/activity) ────
+const ACTIVITY_MAX = 30;
+
+async function appendActivity(entry) {
+  try {
+    const existing = await ghRead("activity/log.json");
+    const data = existing ? JSON.parse(existing.content) : { entries: [] };
+    data.entries.unshift(entry);                        // newest first
+    data.entries = data.entries.slice(0, ACTIVITY_MAX);
+    await ghWrite("activity/log.json", JSON.stringify(data, null, 2), existing?.sha ?? null);
+  } catch (err) {
+    console.warn("appendActivity:", err.message);
+  }
+}
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
@@ -290,7 +305,7 @@ async function cloudExecTool(name, args) {
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
-async function runAgent(chatId, userText, history) {
+async function runAgent(chatId, userText, username, history) {
   history.push({ role: "user", content: userText });
 
   const getMessages = () => [
@@ -313,11 +328,17 @@ async function runAgent(chatId, userText, history) {
     }
   };
 
+  // Structured activity log for the status page
+  const activityRounds = [];
+  let currentRound = null;
+  const startedAt = Date.now();
+
   let round = 0;
   let finalContent = null;
 
   while (round < MAX_TOOL_ROUNDS) {
     round++;
+    currentRound = { round, thinking: null, toolCalls: [] };
     await updateStream(`▶ [R${round}] ${MODEL.split("/").pop()}…`);
 
     const res = await httpsPostRetry(
@@ -346,13 +367,16 @@ async function runAgent(chatId, userText, history) {
     const toolCalls = msg?.tool_calls;
     const thinking = msg?.reasoning_content ?? msg?.reasoning ?? "";
     if (thinking) {
-      const snippet = thinking.slice(0, 180).replace(/\n+/g, " ").trim();
-      await updateStream(`💭 ${snippet}${thinking.length > 180 ? "…" : ""}`);
+      const snippet = thinking.slice(0, 500).replace(/\n+/g, " ").trim();
+      currentRound.thinking = snippet + (thinking.length > 500 ? "…" : "");
+      const display = snippet.slice(0, 180);
+      await updateStream(`💭 ${display}${snippet.length > 180 ? "…" : ""}`);
     }
 
     if (!toolCalls || toolCalls.length === 0) {
       finalContent = msg?.content || thinking || "";
       history.push({ role: "assistant", content: finalContent });
+      activityRounds.push(currentRound);
       break;
     }
 
@@ -362,13 +386,21 @@ async function runAgent(chatId, userText, history) {
       const fnName = tc.function?.name;
       let fnArgs = {};
       try { fnArgs = JSON.parse(tc.function?.arguments || "{}"); } catch {}
-      const keyArg = fnArgs.note_path || fnArgs.path || fnArgs.query || fnArgs.url || "";
+      const keyArg = fnArgs.note_path || fnArgs.path || fnArgs.query || fnArgs.url || fnArgs.command || "";
       await updateStream(`🔧 ${fnName}${keyArg ? `(${String(keyArg).slice(0, 50)})` : ""}`);
       const result = await cloudExecTool(fnName, fnArgs);
-      const out = result.content ?? result.error ?? JSON.stringify(result);
-      await updateStream(`   ↳ ${String(out).replace(/\n+/g, " ").trim().slice(0, 90)}`);
+      const out = result.content ?? result.stdout ?? result.error ?? JSON.stringify(result);
+      const outClean = String(out).replace(/\n+/g, " ").trim();
+      await updateStream(`   ↳ ${outClean.slice(0, 90)}${outClean.length > 90 ? "…" : ""}`);
       history.push({ role: "tool", tool_call_id: tc.id, name: fnName, content: JSON.stringify(result) });
+      currentRound.toolCalls.push({
+        tool: fnName,
+        args: keyArg ? String(keyArg).slice(0, 120) : JSON.stringify(fnArgs).slice(0, 120),
+        result: outClean.slice(0, 300),
+      });
     }
+
+    activityRounds.push(currentRound);
 
     if (round === MAX_TOOL_ROUNDS) {
       history.push({ role: "user", content: "You've reached the tool call limit. Summarize and give your final answer." });
@@ -392,6 +424,18 @@ async function runAgent(chatId, userText, history) {
   await updateStream("─".repeat(28), true);
   await updateStream("✅ done", true);
   await tgEdit(chatId, streamMsgId, `\`\`\`\n${streamLines.slice(-18).join("\n")}\n\`\`\``);
+
+  // Push structured run to activity log (non-blocking)
+  const activityEntry = {
+    timestamp: new Date().toISOString(),
+    username: username || "unknown",
+    userMessage: userText,
+    rounds: activityRounds,
+    finalReply: finalContent.trim().slice(0, 400) + (finalContent.length > 400 ? "…" : ""),
+    durationMs: Date.now() - startedAt,
+    model: MODEL,
+  };
+  appendActivity(activityEntry).catch(() => {});
 
   return { reply: finalContent.trim(), history };
 }
@@ -454,7 +498,7 @@ export default async function handler(req, res) {
       const history = stored ?? [];
 
       // Run agent
-      const { reply, history: updatedHistory } = await runAgent(chatId, text, history);
+      const { reply, history: updatedHistory } = await runAgent(chatId, text, username, history);
 
       // Push updated session back to GitHub
       const toSave = updatedHistory.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
