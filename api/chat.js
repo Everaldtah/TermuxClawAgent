@@ -18,7 +18,9 @@ import https from "node:https";
 import { exec } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { ghRead, ghWrite, pullSession, pushSession } from "../src/sync/github-storage.mjs";
+import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
+import { pullSession, pushSession } from "../src/storage/sessions.mjs";
+import { nextApiKey, poolSize } from "../src/storage/keypool.mjs";
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
@@ -394,14 +396,16 @@ export default async function handler(req, res) {
   const { message, sessionId, userApiKey, userProvider, userModel } = req.body ?? {};
   if (!message?.trim() || !sessionId) return res.status(400).json({ error: "missing message or sessionId" });
 
-  // Build provider config — user key takes priority over server default
+  // Build provider config — user key takes priority over pool key
   const providerKey = userProvider && PROVIDERS[userProvider] ? userProvider : "nvidia";
   const providerInfo = PROVIDERS[providerKey];
+  const poolKey = providerKey === "nvidia" ? await nextApiKey().catch(() => DEFAULT_API_KEY) : DEFAULT_API_KEY;
   const providerCfg = {
-    apiKey:   userApiKey?.trim() || DEFAULT_API_KEY,
+    apiKey:   userApiKey?.trim() || poolKey,
     baseUrl:  providerInfo.baseUrl,
     model:    userModel?.trim()  || providerInfo.defaultModel,
     provider: providerKey.charAt(0).toUpperCase() + providerKey.slice(1),
+    poolSize: poolSize(),
   };
   if (!providerCfg.apiKey) {
     res.setHeader("Content-Type", "application/json");
@@ -423,7 +427,7 @@ export default async function handler(req, res) {
     const stored = await pullSession(webSessionKey).catch(() => null);
     const history = stored ?? [];
 
-    send("provider", { name: providerCfg.provider, model: providerCfg.model });
+    send("provider", { name: providerCfg.provider, model: providerCfg.model, poolSize: providerCfg.poolSize });
     const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg);
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);

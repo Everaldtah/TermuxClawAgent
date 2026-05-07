@@ -17,7 +17,9 @@ import https from "node:https";
 import { exec } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { ghRead, ghWrite, pushSession, pullSession } from "../src/sync/github-storage.mjs";
+import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
+import { pullSession, pushSession } from "../src/storage/sessions.mjs";
+import { nextApiKey } from "../src/storage/keypool.mjs";
 
 // ── Activity log (written to GitHub after each run, read by /api/activity) ────
 const ACTIVITY_MAX = 30;
@@ -37,7 +39,7 @@ async function appendActivity(entry) {
 // ── Env ───────────────────────────────────────────────────────────────────────
 
 const TELEGRAM_TOKEN    = process.env.TELEGRAM_TOKEN    ?? "";
-const NVIDIA_API_KEY    = process.env.NVIDIA_API_KEY    ?? "";
+const NVIDIA_API_KEY    = process.env.NVIDIA_API_KEY    ?? ""; // kept for fallback; pool used at call time
 const NVIDIA_BASE_URL   = process.env.NVIDIA_BASE_URL   ?? "https://integrate.api.nvidia.com/v1";
 const MODEL             = process.env.MODEL             ?? "moonshotai/kimi-k2.6";
 const MAX_TOOL_ROUNDS   = parseInt(process.env.MAX_TOOL_ROUNDS   ?? "15", 10);
@@ -367,6 +369,8 @@ async function cloudExecTool(name, args) {
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
 async function runAgent(chatId, userText, username, history) {
+  const apiKey = await nextApiKey().catch(() => NVIDIA_API_KEY);
+
   history.push({ role: "user", content: userText });
 
   const getMessages = () => [
@@ -415,7 +419,7 @@ async function runAgent(chatId, userText, username, history) {
         tool_choice: "auto",
         chat_template_kwargs: { thinking: true },
       },
-      { Authorization: `Bearer ${NVIDIA_API_KEY}` },
+      { Authorization: `Bearer ${apiKey}` },
       NVIDIA_TIMEOUT_MS,
       2,
     );
@@ -468,7 +472,7 @@ async function runAgent(chatId, userText, username, history) {
       const fr = await httpsPostRetry(
         `${NVIDIA_BASE_URL}/chat/completions`,
         { model: MODEL, messages: getMessages(), max_tokens: 8192, temperature: 1.0, top_p: 1.0, stream: false },
-        { Authorization: `Bearer ${NVIDIA_API_KEY}` },
+        { Authorization: `Bearer ${apiKey}` },
         NVIDIA_TIMEOUT_MS, 2,
       );
       const fm = fr?.choices?.[0]?.message;

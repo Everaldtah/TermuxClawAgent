@@ -459,7 +459,8 @@ async function sendMessage() {
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
         if (evt.type === 'provider') {
-          appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}</div>`);
+          const pool = evt.poolSize > 1 ? ` · ${evt.poolSize} keys` : '';
+          appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}${pool}</div>`);
         } else if (evt.type === 'round') {
           currentRound = evt.round;
           appendFeed(`<div class="tf-round">── Round ${currentRound} ──</div>`);
