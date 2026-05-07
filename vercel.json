@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "name": "termuxclawagent",
+  "functions": {
+    "api/webhook.js": {
+      "maxDuration": 300
+    }
+  },
+  "routes": [
+    {
+      "src": "/webhook",
+      "dest": "/api/webhook.js"
+    }
+  ],
+  "env": {
+    "TELEGRAM_TOKEN": "@telegram_token",
+    "NVIDIA_API_KEY": "@nvidia_api_key",
+    "GITHUB_TOKEN": "@github_token",
+    "GITHUB_STORAGE_REPO": "Everaldtah/termuxclawagent-files",
+    "GITHUB_STORAGE_BRANCH": "main",
+    "MODEL": "moonshotai/kimi-k2.6",
+    "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
+    "NVIDIA_TIMEOUT_MS": "250000",
+    "MAX_TOOL_ROUNDS": "15",
+    "HISTORY_MAX_MSGS": "60"
+  }
+}

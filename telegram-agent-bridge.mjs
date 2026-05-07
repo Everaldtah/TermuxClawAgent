@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { readFile, writeFile, appendFile, mkdir } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
+import { pushSession, pullSession, syncVault } from "./src/sync/github-storage.mjs";
 
 // ── Environment variable loader ───────────────────────────────────────────────
 // Reads .env file from the agent directory if present, then falls back to
@@ -440,27 +441,37 @@ function sessionFile(chatId) {
   return join(SESSIONS_PATH, `${chatId}.json`);
 }
 
-function loadSession(chatId) {
+async function loadSession(chatId) {
   const f = sessionFile(chatId);
+  // Try GitHub first (two-way: remote may be newer from cloud agent)
+  const remote = await pullSession(chatId).catch(() => null);
+  if (remote) {
+    writeFileSync(f, JSON.stringify(remote, null, 2), "utf8");
+    console.log(`  📂 Loaded ${remote.length} messages for chat ${chatId} (GitHub)`);
+    return remote;
+  }
   if (existsSync(f)) {
     try {
       const data = JSON.parse(readFileSync(f, "utf8"));
-      console.log(`  📂 Loaded ${data.length} messages for chat ${chatId}`);
+      console.log(`  📂 Loaded ${data.length} messages for chat ${chatId} (local)`);
       return data;
     } catch { return []; }
   }
   return [];
 }
 
-function saveSession(chatId, messages) {
+async function saveSession(chatId, messages) {
   const toSave = messages.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
-  writeFileSync(sessionFile(chatId), JSON.stringify(toSave, null, 2), "utf8");
+  const json = JSON.stringify(toSave, null, 2);
+  writeFileSync(sessionFile(chatId), json, "utf8");
+  // Push to GitHub so cloud agent can pick it up
+  pushSession(chatId, json).catch(err => console.warn(`  ⚠ session push: ${err.message}`));
 }
 
 const histories = new Map();
 
-function getHistory(chatId) {
-  if (!histories.has(chatId)) histories.set(chatId, loadSession(chatId));
+async function getHistory(chatId) {
+  if (!histories.has(chatId)) histories.set(chatId, await loadSession(chatId));
   return histories.get(chatId);
 }
 
@@ -647,7 +658,7 @@ function makeStreamer(chatId) {
 // ── NVIDIA NIM agentic loop ───────────────────────────────────────────────────
 
 async function runAgent(chatId, userText) {
-  const history = getHistory(chatId);
+  const history = await getHistory(chatId);
   history.push({ role: "user", content: userText });
 
   const getMessages = () => [
@@ -780,7 +791,7 @@ async function runAgent(chatId, userText) {
   await stream.push("✅ done");
   await stream.finish();
 
-  saveSession(chatId, history);
+  await saveSession(chatId, history);
   return finalContent.trim();
 }
 
@@ -822,6 +833,7 @@ async function poll() {
         histories.delete(chatId);
         const f = sessionFile(chatId);
         if (existsSync(f)) writeFileSync(f, "[]", "utf8");
+        pushSession(chatId, "[]").catch(() => {});
         await sendMessage(chatId, "🗑️ Session cleared.");
         continue;
       }
@@ -874,6 +886,13 @@ async function main() {
   mkdirSync(join(VAULT_PATH, "Memory", "Facts"), { recursive: true });
 
   console.log("🤖 Solis (TermuxClawAgent) starting…");
+  console.log(`   GitHub sync: ${process.env.GITHUB_TOKEN ? "enabled (" + (process.env.GITHUB_STORAGE_REPO ?? "Everaldtah/termuxclawagent-files") + ")" : "disabled (set GITHUB_TOKEN to enable)"}`);
+
+  // Two-way vault sync on startup
+  if (process.env.GITHUB_TOKEN) {
+    console.log("  🔄 Syncing vault with GitHub…");
+    syncVault(VAULT_PATH).catch(err => console.warn(`  ⚠ Vault sync: ${err.message}`));
+  }
   console.log(`   Model    : ${MODEL}`);
   console.log(`   Vault    : ${VAULT_PATH}`);
   console.log(`   Sessions : ${SESSIONS_PATH}`);
