@@ -14,6 +14,9 @@
  */
 
 import https from "node:https";
+import { exec } from "node:child_process";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { ghRead, ghWrite, pushSession, pullSession } from "../src/sync/github-storage.mjs";
 
 // ── Activity log (written to GitHub after each run, read by /api/activity) ────
@@ -53,11 +56,19 @@ Running on: Vercel cloud (phone may be offline).
 - Storage: GitHub repo (termuxclawagent-files) — sessions and vault synced here
 
 ## Your Tools
+- **shell_exec**: Run any bash/Linux command on the Vercel server (Amazon Linux, /tmp writable)
+- **file_write**: Write a file to /tmp (ephemeral — lost after this session)
 - **vault_read**: Read a note from the memory vault (fetched from GitHub)
 - **vault_write**: Write a note to the memory vault (pushed to GitHub)
 - **vault_list**: List notes in the vault
 - **vault_search**: Search vault notes
 - **http_get**: Make an HTTP GET request
+
+## Shell environment
+- OS: Amazon Linux (Vercel serverless)
+- Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl
+- Writable path: /tmp (ephemeral — wiped between sessions, use vault to persist results)
+- No sudo / no apt install persistence
 
 ## Memory Vault Layout
 - Memory/Skills/ — things you know how to do
@@ -68,11 +79,41 @@ Running on: Vercel cloud (phone may be offline).
 - Always use tools for real work. Never fake output.
 - Store useful information in vault so you remember it next session.
 - Use markdown for clarity.
-- Note: shell/file tools are unavailable in cloud mode (phone is offline).`;
+- For results you want to keep, write them to the vault after running commands.`;
 
-// ── TOOLS (cloud subset — no shell_exec/file_write since no local FS) ─────────
+// ── TOOLS ─────────────────────────────────────────────────────────────────────
 
 const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "shell_exec",
+      description: "Execute a bash command on the Vercel Linux server. /tmp is writable. Returns stdout, stderr, exit_code.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Bash command to run" },
+          timeout_ms: { type: "integer", description: "Timeout in ms (default 25000, max 60000)" },
+        },
+        required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_write",
+      description: "Write content to a file in /tmp (ephemeral — use vault to persist).",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path inside /tmp, e.g. /tmp/script.py" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -237,6 +278,26 @@ const vaultCache = new Map();
 async function cloudExecTool(name, args) {
   try {
     switch (name) {
+
+      case "shell_exec": {
+        const timeout = Math.min(args.timeout_ms ?? 25000, 60000);
+        return await new Promise((res) => {
+          exec(args.command, { timeout, maxBuffer: 1024 * 512, shell: "/bin/bash" }, (err, stdout, stderr) => {
+            res({
+              stdout: (stdout ?? "").slice(0, 6000),
+              stderr: (stderr ?? "").slice(0, 2000),
+              exit_code: err?.code ?? 0,
+            });
+          });
+        });
+      }
+
+      case "file_write": {
+        const safePath = args.path.startsWith("/tmp/") ? args.path : `/tmp/${args.path.replace(/^\/+/, "")}`;
+        mkdirSync(dirname(safePath), { recursive: true });
+        writeFileSync(safePath, args.content, "utf8");
+        return { success: true, path: safePath };
+      }
 
       case "vault_read": {
         const repoPath = `vault/${args.note_path}`;
