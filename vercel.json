@@ -3,15 +3,14 @@
   "buildCommand": "",
   "installCommand": "npm install --ignore-scripts",
   "functions": {
-    "api/webhook.js": {
-      "maxDuration": 300
-    }
+    "api/webhook.js": { "maxDuration": 300 },
+    "api/chat.js":    { "maxDuration": 300 },
+    "api/activity.js":{ "maxDuration": 30  }
   },
   "routes": [
-    {
-      "src": "/webhook",
-      "dest": "/api/webhook.js"
-    }
+    { "src": "/webhook",  "dest": "/api/webhook.js"  },
+    { "src": "/chat",     "dest": "/api/chat.js"     },
+    { "src": "/activity", "dest": "/api/activity.js" }
   ],
   "env": {
     "GITHUB_STORAGE_REPO": "Everaldtah/termuxclawagent-files",
