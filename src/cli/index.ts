@@ -55,11 +55,12 @@ class TermuxAgentCLI {
     this.program
       .command("chat")
       .description("Start interactive chat session")
-      .option("-m, --model <model>", "LLM model to use", "gpt-4o-mini")
-      .option("-p, --provider <provider>", "API provider", "openai")
+      .option("-m, --model <model>", "LLM model to use", "claude-sonnet-4-6")
+      .option("-p, --provider <provider>", "API provider", "anthropic")
       .option("--no-memory", "Disable conversation memory")
       .option("-s, --system <prompt>", "System prompt")
       .option("-t, --tools <tools>", "Enable tools (comma-separated)")
+      .option("--thinking-budget <tokens>", "Extended thinking token budget (Anthropic Claude only)", "0")
       .argument("[message]", "Initial message")
       .action(this.handleChat.bind(this));
 
@@ -67,8 +68,8 @@ class TermuxAgentCLI {
     this.program
       .command("ask")
       .description("Single-shot question (no interactive mode)")
-      .option("-m, --model <model>", "LLM model", "gpt-4o-mini")
-      .option("-p, --provider <provider>", "API provider", "openai")
+      .option("-m, --model <model>", "LLM model", "claude-sonnet-4-6")
+      .option("-p, --provider <provider>", "API provider", "anthropic")
       .option("--no-stream", "Disable streaming")
       .argument("<question>", "Question to ask")
       .action(this.handleAsk.bind(this));
@@ -147,6 +148,7 @@ class TermuxAgentCLI {
         obsidianMemory,
         model: options.model,
         systemPrompt: options.system,
+        thinkingBudget: parseInt(options.thinkingBudget ?? "0", 10),
       });
 
       // Pre-load vault context (user profile + last session) before first message

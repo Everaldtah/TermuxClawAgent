@@ -7,6 +7,7 @@ import { createInterface, Interface } from "node:readline";
 import { stdin, stdout } from "node:process";
 import { AgentRuntime } from "../runtime.js";
 import { Logger } from "../utils/logger.js";
+import { TokenOptimizer } from "../utils/token-optimizer.js";
 
 export interface ChatOptions {
   multiline?: boolean;
@@ -230,7 +231,8 @@ Shortcuts:
       if (this.options.showTokens) {
         const context = this.runtime.getContext();
         const elapsed = Date.now() - startTime;
-        console.log(`\x1b[90m[${context.messages.length} msgs | ${elapsed}ms]\x1b[0m\n`);
+        const tokenEst = TokenOptimizer.estimateMessages(context.messages);
+        console.log(`\x1b[90m[${context.messages.length} msgs | ~${tokenEst.toLocaleString()} tokens | ${elapsed}ms]\x1b[0m\n`);
       }
 
     } catch (err: unknown) {

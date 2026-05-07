@@ -1,6 +1,7 @@
 /**
  * Orchestration Tools - OpenClaw-inspired agent orchestration for TermuxAgent
- * Native Termux: plan tracking, cron scheduling, sub-agent spawning, web tools
+ * Native Termux: plan tracking, cron scheduling, sub-agent spawning, web tools,
+ * full HTTP requests, and Obsidian RAG memory.
  */
 
 import { execFile } from "node:child_process";
@@ -25,19 +26,18 @@ let activePlan: PlanStep[] = [];
 export function getUpdatePlanTool(): ToolDefinition {
   return {
     name: "update_plan",
-    description: `Maintain a structured plan for multi-step tasks. Call this at the start of complex tasks and update step statuses as you progress. At most one step may be "in_progress" at a time.`,
+    description: `Maintain a structured plan for multi-step tasks. Call at the start of complex tasks and update step statuses as you progress. At most one step may be "in_progress" at a time.`,
     parameters: {
       type: "object",
       properties: {
-        explanation: { type: "string", description: "Optional note about what changed." },
+        explanation: { type: "string" },
         plan: {
           type: "array",
-          description: "Ordered list of plan steps.",
           items: {
             type: "object",
             properties: {
-              step: { type: "string", description: "Short description of the step." },
-              status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Step status." },
+              step: { type: "string" },
+              status: { type: "string", enum: ["pending", "in_progress", "completed"] },
             },
             required: ["step", "status"],
           },
@@ -50,9 +50,6 @@ export function getUpdatePlanTool(): ToolDefinition {
     handler: async (args: { explanation?: string; plan: PlanStep[] }) => {
       const inProgress = args.plan.filter(s => s.status === "in_progress");
       if (inProgress.length > 1) throw new Error("At most one step may be in_progress");
-      for (const s of args.plan) {
-        if (!PLAN_STATUSES.includes(s.status)) throw new Error(`Invalid status: ${s.status}`);
-      }
       activePlan = args.plan;
       const lines = args.plan.map(s => {
         const icon = s.status === "completed" ? "✅" : s.status === "in_progress" ? "⏳" : "⬜";
@@ -110,8 +107,8 @@ export function getTaskTools(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Short task title." },
-          description: { type: "string", description: "Optional task details." },
+          title: { type: "string" },
+          description: { type: "string" },
         },
         required: ["title"],
       },
@@ -137,9 +134,9 @@ export function getTaskTools(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Task ID." },
+          id: { type: "string" },
           status: { type: "string", enum: ["pending", "in_progress", "completed", "failed"] },
-          result: { type: "string", description: "Optional result or notes." },
+          result: { type: "string" },
         },
         required: ["id"],
       },
@@ -170,7 +167,10 @@ export function getTaskTools(): ToolDefinition[] {
         const filtered = (!args.status || args.status === "all")
           ? tasks
           : tasks.filter(t => t.status === args.status);
-        return filtered.map(t => ({ id: t.id, title: t.title, status: t.status, updated: new Date(t.updated).toISOString() }));
+        return filtered.map(t => ({
+          id: t.id, title: t.title, status: t.status,
+          updated: new Date(t.updated).toISOString(),
+        }));
       },
     },
   ];
@@ -181,8 +181,8 @@ export function getTaskTools(): ToolDefinition[] {
 interface CronJob {
   id: string;
   name: string;
-  schedule: string;  // cron expression or "every Xm/Xh/Xd"
-  message: string;   // message to inject into agent
+  schedule: string;
+  message: string;
   enabled: boolean;
   lastRun?: number;
   nextRun?: number;
@@ -203,28 +203,62 @@ function parseIntervalMs(schedule: string): number | null {
   const m = schedule.match(/^every\s+(\d+)(m|h|d)$/i);
   if (!m) return null;
   const n = parseInt(m[1]);
-  const unit = m[2].toLowerCase();
-  return unit === "m" ? n * 60000 : unit === "h" ? n * 3600000 : n * 86400000;
+  const u = m[2].toLowerCase();
+  return u === "m" ? n * 60000 : u === "h" ? n * 3600000 : n * 86400000;
+}
+
+/**
+ * Parse a 5-field cron expression and return ms until next fire.
+ * Supports: minute hour dom month dow (all numeric, no names/ranges).
+ * Returns null if the expression is invalid or not supported.
+ */
+function parseCronNextMs(schedule: string): number | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minPat, hourPat, , , dowPat] = parts;
+
+  const now = new Date();
+  const matchField = (pat: string, val: number) =>
+    pat === "*" || parseInt(pat) === val;
+
+  // Walk forward minute by minute (max 1 week) to find next match
+  const candidate = new Date(now.getTime() + 60_000);
+  candidate.setSeconds(0, 0);
+  for (let i = 0; i < 7 * 24 * 60; i++) {
+    if (
+      matchField(minPat, candidate.getMinutes()) &&
+      matchField(hourPat, candidate.getHours()) &&
+      matchField(dowPat, candidate.getDay())
+    ) {
+      return candidate.getTime() - now.getTime();
+    }
+    candidate.setTime(candidate.getTime() + 60_000);
+  }
+  return null;
 }
 
 export function getCronTools(onTrigger?: (job: CronJob) => void): ToolDefinition[] {
   return [
     {
       name: "cron_add",
-      description: `Schedule a recurring agent task. Schedule format: "every 30m", "every 2h", "every 1d". The message will be auto-injected into the agent on each trigger.`,
+      description: `Schedule a recurring agent task.
+Supported formats:
+  • Simple:  "every 30m" | "every 2h" | "every 1d"
+  • Cron:    "minute hour * * dow"  (e.g. "0 9 * * 1" = every Monday 9am)`,
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Job name." },
-          schedule: { type: "string", description: 'Schedule, e.g. "every 30m" or "every 2h".' },
-          message: { type: "string", description: "Message to send to the agent on each trigger." },
+          name: { type: "string" },
+          schedule: { type: "string" },
+          message: { type: "string" },
         },
         required: ["name", "schedule", "message"],
       },
       enabled: true,
       handler: async (args: { name: string; schedule: string; message: string }) => {
-        const ms = parseIntervalMs(args.schedule);
-        if (!ms) throw new Error('Schedule must be like "every 30m", "every 2h", "every 1d"');
+        const ms = parseIntervalMs(args.schedule) ?? parseCronNextMs(args.schedule);
+        if (!ms) throw new Error('Schedule must be "every 30m"/"every 2h" or a 5-field cron "0 9 * * 1"');
+
         const jobs = await loadCron();
         const job: CronJob = {
           id: `cron-${Date.now()}`,
@@ -240,7 +274,8 @@ export function getCronTools(onTrigger?: (job: CronJob) => void): ToolDefinition
         if (onTrigger) {
           const timer = setInterval(async () => {
             job.lastRun = Date.now();
-            job.nextRun = Date.now() + ms;
+            const nextMs = parseIntervalMs(args.schedule) ?? parseCronNextMs(args.schedule) ?? ms;
+            job.nextRun = Date.now() + nextMs;
             const all = await loadCron();
             const idx = all.findIndex(j => j.id === job.id);
             if (idx >= 0) { all[idx] = job; await saveCron(all); }
@@ -271,7 +306,7 @@ export function getCronTools(onTrigger?: (job: CronJob) => void): ToolDefinition
       description: "Remove a scheduled cron job by ID.",
       parameters: {
         type: "object",
-        properties: { id: { type: "string", description: "Job ID." } },
+        properties: { id: { type: "string" } },
         required: ["id"],
       },
       enabled: true,
@@ -291,19 +326,18 @@ export function getCronTools(onTrigger?: (job: CronJob) => void): ToolDefinition
   ];
 }
 
-// ─── Web Fetch (OpenClaw-style with readable extraction) ──────────────────────
+// ─── Web Fetch ────────────────────────────────────────────────────────────────
 
 const MAX_FETCH_CHARS = 50_000;
-const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 20_000;
 
 function extractTextFromHtml(html: string): string {
-  // Strip scripts, styles, tags; decode entities
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&quot;/gi, '"')
-    .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"').replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
     .replace(/&#(\d+);/gi, (_, n) => String.fromCharCode(+n))
     .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -327,6 +361,8 @@ function htmlToMarkdown(html: string): string {
     .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const MOBILE_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122 Safari/537.36";
+
 export function getWebFetchTool(): ToolDefinition {
   return {
     name: "web_fetch",
@@ -334,9 +370,9 @@ export function getWebFetchTool(): ToolDefinition {
     parameters: {
       type: "object",
       properties: {
-        url: { type: "string", description: "HTTP/HTTPS URL to fetch." },
-        extract_mode: { type: "string", enum: ["markdown", "text"], description: 'Content extraction mode (default: "markdown").' },
-        max_chars: { type: "number", description: `Max characters to return (default: ${MAX_FETCH_CHARS}).` },
+        url: { type: "string" },
+        extract_mode: { type: "string", enum: ["markdown", "text"] },
+        max_chars: { type: "number" },
       },
       required: ["url"],
     },
@@ -344,25 +380,22 @@ export function getWebFetchTool(): ToolDefinition {
     handler: async (args: { url: string; extract_mode?: "markdown" | "text"; max_chars?: number }) => {
       const mode = args.extract_mode ?? "markdown";
       const maxChars = args.max_chars ?? MAX_FETCH_CHARS;
-
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
       try {
         const res = await fetch(args.url, {
           signal: controller.signal,
-          headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/122 Safari/537.36" },
+          headers: { "User-Agent": MOBILE_UA },
         });
         clearTimeout(timer);
         const html = await res.text();
         const content = mode === "markdown" ? htmlToMarkdown(html) : extractTextFromHtml(html);
-        const truncated = content.length > maxChars;
         return {
           url: args.url,
           status: res.status,
           mode,
           content: content.slice(0, maxChars),
-          truncated,
+          truncated: content.length > maxChars,
           chars: Math.min(content.length, maxChars),
         };
       } catch (err: any) {
@@ -373,17 +406,17 @@ export function getWebFetchTool(): ToolDefinition {
   };
 }
 
-// ─── Web Search (DuckDuckGo Instant Answer — no API key needed) ───────────────
+// ─── Web Search ───────────────────────────────────────────────────────────────
 
 export function getWebSearchTool(): ToolDefinition {
   return {
     name: "web_search",
-    description: "Search the web using DuckDuckGo. Returns top results with titles, URLs, and snippets. No API key required.",
+    description: "Search the web using DuckDuckGo. Returns top results with titles, URLs, and snippets. Falls back to HTML scraping for complex queries.",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search query." },
-        max_results: { type: "number", description: "Max results to return (default: 5)." },
+        query: { type: "string" },
+        max_results: { type: "number" },
       },
       required: ["query"],
     },
@@ -392,25 +425,24 @@ export function getWebSearchTool(): ToolDefinition {
       const maxResults = args.max_results ?? 5;
       const encoded = encodeURIComponent(args.query);
 
-      // DuckDuckGo Instant Answer API (JSON, no key)
+      // 1. DuckDuckGo Instant Answer API (fast, no key)
       const ddgUrl = `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`;
-
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10_000);
 
       try {
-        const res = await fetch(ddgUrl, { signal: controller.signal, headers: { "User-Agent": "TermuxAgent/1.0" } });
+        const res = await fetch(ddgUrl, {
+          signal: controller.signal,
+          headers: { "User-Agent": "TermuxAgent/1.2" },
+        });
         clearTimeout(timer);
         const data: any = await res.json();
 
         const results: { title: string; url: string; snippet: string }[] = [];
 
-        // Abstract (top answer)
         if (data.AbstractText) {
           results.push({ title: data.Heading ?? "Answer", url: data.AbstractURL ?? "", snippet: data.AbstractText });
         }
-
-        // Related topics
         for (const topic of (data.RelatedTopics ?? [])) {
           if (results.length >= maxResults) break;
           if (topic.Text && topic.FirstURL) {
@@ -424,9 +456,34 @@ export function getWebSearchTool(): ToolDefinition {
             }
           }
         }
-
-        if (results.length === 0 && data.Answer) {
+        if (!results.length && data.Answer) {
           results.push({ title: "Direct Answer", url: "", snippet: data.Answer });
+        }
+
+        // 2. HTML scraping fallback when instant API returns nothing
+        if (results.length === 0) {
+          const htmlRes = await fetch(
+            `https://html.duckduckgo.com/html/?q=${encoded}`,
+            { headers: { "User-Agent": MOBILE_UA } },
+          ).catch(() => null);
+          if (htmlRes?.ok) {
+            const html = await htmlRes.text();
+            // Extract result snippets via regex (no DOM parser needed)
+            const snippetRe = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+            const titleRe = /<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+            const titles: { url: string; title: string }[] = [];
+            const snippets: string[] = [];
+            let m: RegExpExecArray | null;
+            while ((m = titleRe.exec(html)) !== null && titles.length < maxResults) {
+              titles.push({ url: m[1], title: extractTextFromHtml(m[2]) });
+            }
+            while ((m = snippetRe.exec(html)) !== null && snippets.length < maxResults) {
+              snippets.push(extractTextFromHtml(m[1]));
+            }
+            for (let i = 0; i < Math.min(titles.length, snippets.length, maxResults); i++) {
+              results.push({ title: titles[i].title, url: titles[i].url, snippet: snippets[i] });
+            }
+          }
         }
 
         return { query: args.query, results: results.slice(0, maxResults), source: "duckduckgo" };
@@ -438,19 +495,98 @@ export function getWebSearchTool(): ToolDefinition {
   };
 }
 
+// ─── HTTP Request (full control) ─────────────────────────────────────────────
+
+export function getHttpRequestTool(): ToolDefinition {
+  return {
+    name: "http_request",
+    description: "Make any HTTP request with full control over method, headers, and body. Returns status, response headers, and body.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL including query string." },
+        method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], description: "HTTP method (default: GET)." },
+        headers: { type: "object", description: "Request headers as key-value pairs." },
+        body: { type: "string", description: "Raw request body (string)." },
+        json: { type: "object", description: "JSON body — sets Content-Type: application/json automatically." },
+        timeout_ms: { type: "number", description: "Timeout in milliseconds (default: 15000)." },
+        max_response_chars: { type: "number", description: "Max response body chars to return (default: 10000)." },
+      },
+      required: ["url"],
+    },
+    enabled: true,
+    handler: async (args: {
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      json?: any;
+      timeout_ms?: number;
+      max_response_chars?: number;
+    }) => {
+      const method = (args.method ?? "GET").toUpperCase();
+      const timeoutMs = args.timeout_ms ?? 15_000;
+      const maxChars = args.max_response_chars ?? 10_000;
+
+      const reqHeaders: Record<string, string> = { ...(args.headers ?? {}) };
+      let bodyContent: string | undefined;
+
+      if (args.json !== undefined) {
+        reqHeaders["Content-Type"] = "application/json";
+        bodyContent = JSON.stringify(args.json);
+      } else if (args.body) {
+        bodyContent = args.body;
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const res = await fetch(args.url, {
+          method,
+          headers: reqHeaders,
+          ...(bodyContent ? { body: bodyContent } : {}),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        const responseHeaders: Record<string, string> = {};
+        res.headers.forEach((val, key) => { responseHeaders[key] = val; });
+
+        const rawBody = await res.text();
+        const truncated = rawBody.length > maxChars;
+
+        let parsedBody: any = rawBody.slice(0, maxChars);
+        try { parsedBody = JSON.parse(rawBody); } catch { /* keep as text */ }
+
+        return {
+          status: res.status,
+          statusText: res.statusText,
+          headers: responseHeaders,
+          body: typeof parsedBody === "object" ? parsedBody : parsedBody,
+          truncated,
+        };
+      } catch (err: any) {
+        clearTimeout(timer);
+        throw new Error(`HTTP request failed: ${err.message}`);
+      }
+    },
+  };
+}
+
 // ─── Sub-agent Spawner ────────────────────────────────────────────────────────
 
 export function getSpawnAgentTool(): ToolDefinition {
   return {
     name: "spawn_agent",
-    description: "Spawn a sub-agent process to handle a task independently. The sub-agent runs the same termux-agent CLI with a given message and returns its response. Useful for parallelising work or delegating sub-tasks.",
+    description: "Spawn a sub-agent process to handle a task independently. Returns the sub-agent's response.",
     parameters: {
       type: "object",
       properties: {
-        message: { type: "string", description: "Task message for the sub-agent." },
-        model: { type: "string", description: "Model override for the sub-agent (default: same as parent)." },
-        provider: { type: "string", description: "Provider override (default: same as parent)." },
-        timeout_seconds: { type: "number", description: "Max time to wait for sub-agent (default: 120)." },
+        message: { type: "string" },
+        model: { type: "string" },
+        provider: { type: "string" },
+        timeout_seconds: { type: "number" },
       },
       required: ["message"],
     },
@@ -461,13 +597,9 @@ export function getSpawnAgentTool(): ToolDefinition {
       if (args.model) cliArgs.push("--model", args.model);
       if (args.provider) cliArgs.push("--provider", args.provider);
       cliArgs.push("--no-stream");
-
-      // Find agent entry point
       const agentPath = join(homedir(), "TermuxClawAgent", "termux-agent.mjs");
-      const nodeArgs = [agentPath, ...cliArgs];
-
       try {
-        const { stdout, stderr } = await execFileAsync("node", nodeArgs, {
+        const { stdout, stderr } = await execFileAsync("node", [agentPath, ...cliArgs], {
           timeout,
           encoding: "utf8",
           env: process.env,
@@ -496,25 +628,16 @@ export function getMemoryTools(vaultPath?: string): ToolDefinition[] {
       description: `Store information into the persistent Obsidian RAG vault.
 Vault: ${vault}/RAG-Memory/
 Folder mapping:
-  fact      → Knowledge/    (facts, user info, permanent knowledge)
-  episode   → Sessions/     (conversation summaries, events)
-  skill     → Skills/       (how to do things, procedures)
-  note      → Logs/         (actions taken, events logged)
-  research  → Research/     (analysis, findings, summaries)
-  project   → Projects/     (ongoing project state)
-  user      → UserProfile/  (facts about the user)
-  system    → System/       (agent config, rules)
-After storing important memories, call vault_sync to persist to GitHub.`,
+  fact → Knowledge/   skill → Skills/   episode → Sessions/
+  note → Logs/        research → Research/   project → Projects/
+  user → UserProfile/   system → System/
+Call vault_sync after storing important memories.`,
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Memory title (becomes the filename)." },
-          content: { type: "string", description: "Memory content in markdown." },
-          kind: {
-            type: "string",
-            enum: VAULT_KINDS,
-            description: "Memory category. Use 'fact' for knowledge, 'user' for user info, 'episode' for session summaries, 'skill' for procedures.",
-          },
+          title: { type: "string" },
+          content: { type: "string" },
+          kind: { type: "string", enum: VAULT_KINDS },
         },
         required: ["title", "content"],
       },
@@ -544,12 +667,12 @@ After storing important memories, call vault_sync to persist to GitHub.`,
     },
     {
       name: "memory_recall",
-      description: `Search the Obsidian RAG vault for relevant memories. Searches across all folders (Knowledge, Sessions, Skills, Logs, Research, Projects, UserProfile, System). Use this at the start of conversations to recall context about the user and prior work.`,
+      description: "Search the Obsidian RAG vault for relevant memories (BM25 scored). Use at the start of conversations to recall context.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query — keywords or phrases." },
-          top_k: { type: "number", description: "Max results to return (default: 6)." },
+          query: { type: "string" },
+          top_k: { type: "number" },
         },
         required: ["query"],
       },
@@ -583,7 +706,7 @@ After storing important memories, call vault_sync to persist to GitHub.`,
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: VAULT_KINDS, description: "Filter by memory kind (omit for all)." },
+          kind: { type: "string", enum: VAULT_KINDS },
         },
       },
       enabled: true,
@@ -594,18 +717,18 @@ After storing important memories, call vault_sync to persist to GitHub.`,
     },
     {
       name: "vault_sync",
-      description: `Sync the Obsidian vault to GitHub using ~/vault-sync.sh. Run this after storing important memories to persist them across sessions and devices. Script: ~/vault-sync.sh`,
+      description: "Sync the Obsidian vault to GitHub. Run after storing important memories.",
       parameters: {
         type: "object",
         properties: {
-          message: { type: "string", description: "Optional commit message (default: auto-generated timestamp)." },
+          message: { type: "string" },
         },
       },
       enabled: true,
       handler: async (args: { message?: string }) => {
         const syncScript = join(homedir(), "vault-sync.sh");
         if (!existsSync(syncScript)) {
-          return { synced: false, error: `Sync script not found at ${syncScript}. Run the vault setup first.` };
+          return { synced: false, error: `Sync script not found at ${syncScript}. Run vault setup first.` };
         }
         try {
           const { stdout, stderr } = await execFileAsync("bash", [syncScript], {
@@ -615,7 +738,7 @@ After storing important memories, call vault_sync to persist to GitHub.`,
           });
           return { synced: true, output: stdout.trim(), stderr: stderr.trim() || undefined };
         } catch (err: any) {
-          return { synced: false, error: (err as Error).message, output: err.stdout ?? "" };
+          return { synced: false, error: (err as Error).message, output: (err as any).stdout ?? "" };
         }
       },
     },
@@ -626,7 +749,7 @@ After storing important memories, call vault_sync to persist to GitHub.`,
 
 export function getOrchestrationTools(opts?: {
   vaultPath?: string;
-  onCronTrigger?: (job: CronJob) => void;
+  onCronTrigger?: (job: any) => void;
 }): ToolDefinition[] {
   return [
     getUpdatePlanTool(),
@@ -635,6 +758,7 @@ export function getOrchestrationTools(opts?: {
     ...getCronTools(opts?.onCronTrigger),
     getWebFetchTool(),
     getWebSearchTool(),
+    getHttpRequestTool(),
     getSpawnAgentTool(),
     ...getMemoryTools(opts?.vaultPath),
   ];

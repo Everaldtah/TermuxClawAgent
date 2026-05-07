@@ -39,6 +39,7 @@ export {
   getCronTools,
   getWebFetchTool,
   getWebSearchTool,
+  getHttpRequestTool,
   getSpawnAgentTool,
   getMemoryTools,
 } from "./tools/orchestration.js";
@@ -49,4 +50,4 @@ export type { LogLevel } from "./utils/logger.js";
 export { TokenOptimizer } from "./utils/token-optimizer.js";
 
 // Version
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";

@@ -42,13 +42,14 @@ export class MemoryStore {
     this.loaded = true;
   }
 
-  async save(message: { role: string; content: string }): Promise<void> {
+  async save(message: { role: string; content: string; session?: string; sessionId?: string }): Promise<void> {
     await this.load();
     const entry: MemoryEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: message.role,
       content: message.content,
       timestamp: Date.now(),
+      session: message.session ?? message.sessionId,
     };
     this.entries.push(entry);
     // Keep last 500 entries
