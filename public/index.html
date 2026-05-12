@@ -69,8 +69,8 @@
     @keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
 
     /* Input bar */
-    .input-bar{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #181818;background:#0e0e0e}
-    .input-bar textarea{flex:1;background:#0a0a0a;border:1px solid #232323;border-radius:8px;color:#d4d4d4;font-family:inherit;font-size:0.85rem;padding:10px 12px;resize:none;height:44px;max-height:140px;outline:none;transition:border-color .2s;overflow:hidden}
+    .input-bar{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #181818;background:#0e0e0e;flex-wrap:wrap}
+    .input-bar textarea{flex:1;min-width:0;background:#0a0a0a;border:1px solid #232323;border-radius:8px;color:#d4d4d4;font-family:inherit;font-size:0.85rem;padding:10px 12px;resize:none;height:44px;max-height:140px;outline:none;transition:border-color .2s;overflow:hidden}
     .input-bar textarea:focus{border-color:#3b82f6}
     .input-bar textarea::placeholder{color:#333}
     .send-btn{background:#1e40af;color:#bfdbfe;border:none;border-radius:8px;padding:0 18px;font-family:inherit;font-size:0.82rem;cursor:pointer;transition:background .2s;flex-shrink:0;height:44px}
@@ -79,6 +79,15 @@
     .new-chat-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:8px;padding:0 12px;font-family:inherit;font-size:0.75rem;cursor:pointer;height:44px;flex-shrink:0}
     .new-chat-btn:hover{color:#d4d4d4;border-color:#333}
 
+    /* Background mode button */
+    .bg-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:8px;padding:0 12px;font-family:inherit;font-size:0.75rem;cursor:pointer;height:44px;flex-shrink:0;transition:all .2s;white-space:nowrap}
+    .bg-btn:hover{color:#d4d4d4;border-color:#333}
+    .bg-btn.active{background:#0a1a0a;color:#22c55e;border-color:#22c55e55}
+
+    /* Background mode hint bar */
+    .bg-hint{display:none;padding:6px 16px;background:#0a1a0a;border-top:1px solid #22c55e22;font-size:0.72rem;color:#22c55e88;text-align:center}
+    .bg-hint.show{display:block}
+
     /* Welcome state */
     .welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:#333;font-size:0.83rem;text-align:center;padding:24px}
     .welcome-icon{font-size:2rem;margin-bottom:4px}
@@ -86,6 +95,34 @@
     .suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px}
     .suggestion{background:#141414;border:1px solid #1e1e1e;border-radius:8px;padding:7px 12px;font-size:0.77rem;color:#555;cursor:pointer;transition:all .2s}
     .suggestion:hover{color:#d4d4d4;border-color:#333;background:#181818}
+
+    /* ── Background Jobs panel ── */
+    .jobs-list{padding:0}
+    .job-entry{border-bottom:1px solid #161616;padding:12px 16px}
+    .job-entry:last-child{border-bottom:none}
+    .job-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
+    .job-msg{flex:1;font-size:0.84rem;color:#d4d4d4;word-break:break-word;line-height:1.4}
+    .job-meta{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+    .job-reply{background:#0d1117;border-left:2px solid #22c55e;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#86efac;line-height:1.5;word-break:break-word;margin-top:4px}
+    .job-error{background:#0d1117;border-left:2px solid #ef4444;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#fca5a5;line-height:1.5;margin-top:4px}
+    .job-progress{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:6px 10px;font-size:0.72rem;color:#475569;margin-top:4px;line-height:1.5}
+    .job-actions{display:flex;gap:6px;margin-top:8px}
+    .job-load-btn{background:#1e3a5f;color:#bfdbfe;border:none;border-radius:6px;padding:4px 10px;font-family:inherit;font-size:0.72rem;cursor:pointer}
+    .job-load-btn:hover{background:#2563eb}
+    .job-del-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:6px;padding:4px 8px;font-family:inherit;font-size:0.72rem;cursor:pointer}
+    .job-del-btn:hover{color:#ef4444;border-color:#ef444444}
+    .tag{font-size:0.67rem;padding:2px 6px;border-radius:10px;background:#141414;border:1px solid #1e1e1e;color:#555;white-space:nowrap}
+    .tag.running{color:#f59e0b;border-color:#f59e0b33;animation:tpulse 1.5s infinite}
+    @keyframes tpulse{0%,100%{opacity:1}50%{opacity:.5}}
+    .tag.done{color:#22c55e;border-color:#22c55e33}
+    .tag.error{color:#ef4444;border-color:#ef444433}
+    .tag.rounds{color:#a78bfa;border-color:#a78bfa33}
+    .tag.dur{color:#60a5fa;border-color:#60a5fa33}
+
+    /* ── Notification banner ── */
+    .notif-banner{position:fixed;top:16px;right:16px;z-index:9999;background:#0a1a0a;border:1px solid #22c55e55;border-radius:10px;padding:10px 16px;font-size:0.8rem;color:#22c55e;max-width:320px;animation:slideIn .3s ease;box-shadow:0 4px 20px #00000088}
+    @keyframes slideIn{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
+    .notif-banner.error{background:#1a0a0a;border-color:#ef444455;color:#fca5a5}
 
     /* ── Activity feed ── */
     .feed-body{padding:0}
@@ -97,9 +134,6 @@
     .entry-user{font-size:0.7rem;color:#444;flex-shrink:0;padding-top:1px}
     .entry-msg{color:#d4d4d4;font-size:0.84rem;flex:1;word-break:break-word}
     .entry-meta{display:flex;gap:6px;align-items:center;flex-shrink:0}
-    .tag{font-size:0.67rem;padding:2px 6px;border-radius:10px;background:#141414;border:1px solid #1e1e1e;color:#555;white-space:nowrap}
-    .tag.rounds{color:#a78bfa;border-color:#a78bfa33}
-    .tag.dur{color:#60a5fa;border-color:#60a5fa33}
     .chevron{color:#2a2a2a;font-size:0.68rem;transition:transform .15s}
     .entry.open .chevron{transform:rotate(90deg)}
     .entry-body{display:none;padding:10px 16px 14px}
@@ -123,11 +157,11 @@
   <div class="card">
     <div class="card-body">
       <div class="status-header"><div class="dot"></div><h1>Solis — TermuxClawAgent</h1></div>
-      <p class="sub">Cloud agent on Vercel · NVIDIA NIM · GitHub sync</p>
+      <p class="sub">Cloud agent on Vercel · NVIDIA NIM · GitHub sync · Background jobs</p>
       <div class="row"><span class="label">Status</span><span class="value ok">● Online</span></div>
       <div class="row"><span class="label">Model</span><span class="value">moonshotai/kimi-k2.6</span></div>
       <div class="row"><span class="label">Shell</span><span class="value ok">✓ Amazon Linux</span></div>
-      <div class="row"><span class="label">Webhook</span><span class="value ok">✓ Registered</span></div>
+      <div class="row"><span class="label">Background Jobs</span><span class="value ok">✓ Runs after page close</span></div>
       <div class="row"><span class="label">Storage</span><span class="value">GitHub two-way sync</span></div>
       <div class="row"><span class="label">Telegram</span><span class="value"><a href="https://t.me/SolisTermuxclaw_bot" target="_blank">@SolisTermuxclaw_bot →</a></span></div>
     </div>
@@ -194,6 +228,7 @@
           <div class="welcome-icon">🤖</div>
           <h3>Ask Solis anything</h3>
           <p>Runs real Linux commands · reads/writes memory vault · fetches the web</p>
+          <p style="margin-top:6px;color:#2a7a2a;font-size:0.75rem">⚡ Toggle Background mode to submit jobs that keep running after you close the page</p>
           <div class="suggestions">
             <span class="suggestion" onclick="fillInput(this)">What tools do you have?</span>
             <span class="suggestion" onclick="fillInput(this)">What's the server OS and resources?</span>
@@ -202,11 +237,24 @@
           </div>
         </div>
       </div>
+      <div class="bg-hint" id="bg-hint">⚡ Background mode — message will be queued on the server. You can close this page and check results in the Jobs panel below.</div>
       <div class="input-bar">
         <textarea id="input" placeholder="Ask Solis anything…" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="new-chat-btn" onclick="newChat()" title="New session">↺</button>
+        <button class="bg-btn" id="bg-btn" onclick="toggleBgMode()" title="Toggle background mode — jobs run even after you close the page">⚡ Background</button>
         <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Background Jobs -->
+  <div class="card">
+    <div class="section-head">
+      <span class="section-title">⚡ Background Jobs</span>
+      <span class="badge" id="jobs-badge">0 jobs</span>
+    </div>
+    <div class="jobs-list" id="jobs-list">
+      <p class="empty">No background jobs yet. Toggle ⚡ Background and submit a message — it will keep running after you close the page.</p>
     </div>
   </div>
 
@@ -288,13 +336,12 @@ function updateApiBadge() {
 
 function getApiConfig() {
   return {
-    userApiKey:  localStorage.getItem('solis_api_key')  || undefined,
-    userProvider:localStorage.getItem('solis_provider') || undefined,
-    userModel:   localStorage.getItem('solis_model')    || undefined,
+    userApiKey:   localStorage.getItem('solis_api_key')  || undefined,
+    userProvider: localStorage.getItem('solis_provider') || undefined,
+    userModel:    localStorage.getItem('solis_model')    || undefined,
   };
 }
 
-// Restore saved config on load
 (function restoreApiConfig() {
   const k = localStorage.getItem('solis_api_key');
   const p = localStorage.getItem('solis_provider');
@@ -311,6 +358,192 @@ function getSessionId() {
   let id = localStorage.getItem('solis_session');
   if (!id) { id = crypto.randomUUID(); localStorage.setItem('solis_session', id); }
   return id;
+}
+
+// ── Background mode ───────────────────────────────────────────────────────────
+
+let bgMode = false;
+
+function toggleBgMode() {
+  bgMode = !bgMode;
+  const btn = document.getElementById('bg-btn');
+  const hint = document.getElementById('bg-hint');
+  btn.classList.toggle('active', bgMode);
+  hint.classList.toggle('show', bgMode);
+  if (bgMode) {
+    document.getElementById('input').placeholder = 'Submit a background job — runs even after you close the page…';
+  } else {
+    document.getElementById('input').placeholder = 'Ask Solis anything…';
+  }
+}
+
+// ── Background Jobs storage ───────────────────────────────────────────────────
+
+function getJobs() {
+  try { return JSON.parse(localStorage.getItem('solis_jobs') || '[]'); } catch { return []; }
+}
+
+function saveJobs(jobs) {
+  localStorage.setItem('solis_jobs', JSON.stringify(jobs.slice(0, 30)));
+}
+
+function upsertJob(job) {
+  const jobs = getJobs();
+  const idx = jobs.findIndex(j => j.id === job.id);
+  if (idx !== -1) jobs[idx] = job;
+  else jobs.unshift(job);
+  saveJobs(jobs);
+  renderJobs();
+}
+
+function removeJob(jobId) {
+  const jobs = getJobs().filter(j => j.id !== jobId);
+  saveJobs(jobs);
+  renderJobs();
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtDur(ms) { if (!ms) return ''; return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's'; }
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+
+function renderJobs() {
+  const jobs = getJobs();
+  const badge = document.getElementById('jobs-badge');
+  badge.textContent = jobs.length + ' job' + (jobs.length !== 1 ? 's' : '');
+  const running = jobs.filter(j => j.status === 'running').length;
+  if (running) {
+    badge.textContent += ' · ' + running + ' running';
+    badge.className = 'badge live';
+  } else {
+    badge.className = 'badge';
+  }
+
+  const container = document.getElementById('jobs-list');
+  if (!jobs.length) {
+    container.innerHTML = '<p class="empty">No background jobs yet. Toggle ⚡ Background and submit a message — it will keep running after you close the page.</p>';
+    return;
+  }
+
+  container.innerHTML = jobs.map(job => {
+    const roundCount = (job.rounds || []).length;
+    const preview = job.reply ? job.reply.slice(0, 200) + (job.reply.length > 200 ? '…' : '') : '';
+    const progressInfo = job.status === 'running' && roundCount > 0
+      ? `<div class="job-progress">Round ${roundCount} in progress… (poll auto-updates every 5s)</div>`
+      : '';
+    const replyBlock = job.status === 'done' && preview
+      ? `<div class="job-reply">${escHtml(preview)}</div>`
+      : '';
+    const errorBlock = job.status === 'error' && job.error
+      ? `<div class="job-error">Error: ${escHtml(job.error)}</div>`
+      : '';
+    const durTag = job.durationMs ? `<span class="tag dur">${fmtDur(job.durationMs)}</span>` : '';
+    const roundTag = roundCount ? `<span class="tag rounds">${roundCount}r</span>` : '';
+    const actions = job.status === 'done'
+      ? `<div class="job-actions">
+           <button class="job-load-btn" onclick="loadJobToChat('${escHtml(job.id)}')">Load reply in chat</button>
+           <button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕</button>
+         </div>`
+      : job.status === 'error'
+        ? `<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`
+        : '';
+    return `
+      <div class="job-entry">
+        <div class="job-head">
+          <div class="job-msg">${escHtml(job.message.slice(0, 120))}${job.message.length > 120 ? '…' : ''}</div>
+          <div class="job-meta">
+            <span class="tag ${job.status}">${job.status}</span>
+            ${roundTag}${durTag}
+            <span class="tag">${fmtTime(job.created)}</span>
+          </div>
+        </div>
+        ${progressInfo}${replyBlock}${errorBlock}${actions}
+      </div>`;
+  }).join('');
+}
+
+// ── Job polling ───────────────────────────────────────────────────────────────
+
+async function pollJobs() {
+  const jobs = getJobs();
+  const running = jobs.filter(j => j.status === 'running');
+  if (!running.length) return;
+
+  await Promise.all(running.map(async job => {
+    try {
+      const r = await fetch('/job?id=' + encodeURIComponent(job.id));
+      if (!r.ok) return;
+      const data = await r.json();
+      const wasRunning = job.status === 'running';
+      upsertJob({ ...job, ...data });
+      if (wasRunning && data.status === 'done') {
+        showNotification('Job done: ' + job.message.slice(0, 50));
+      } else if (wasRunning && data.status === 'error') {
+        showNotification('Job error: ' + (data.error || 'unknown'), true);
+      }
+    } catch {}
+  }));
+}
+
+setInterval(pollJobs, 5000);
+
+// ── Notification banner ───────────────────────────────────────────────────────
+
+function showNotification(msg, isError = false) {
+  const banner = document.createElement('div');
+  banner.className = 'notif-banner' + (isError ? ' error' : '');
+  banner.textContent = (isError ? '✕ ' : '✓ ') + msg;
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 6000);
+
+  if (!isError && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try { new Notification('Solis — job complete', { body: msg }); } catch {}
+  }
+}
+
+// Request notification permission on first job submit
+function maybeRequestNotifications() {
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {});
+  }
+}
+
+// ── Load job result into chat ─────────────────────────────────────────────────
+
+function loadJobToChat(jobId) {
+  const jobs = getJobs();
+  const job = jobs.find(j => j.id === jobId);
+  if (!job) return;
+  addMessage('user', job.message);
+  if (job.reply) addMessage('agent', job.reply);
+}
+
+// ── Submit a background job ───────────────────────────────────────────────────
+
+async function submitBackground(text) {
+  maybeRequestNotifications();
+  const tempId = 'tmp-' + Date.now();
+  upsertJob({ id: tempId, status: 'running', message: text, created: Date.now(), rounds: [], reply: null });
+
+  try {
+    const r = await fetch('/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Submit failed');
+
+    // Replace temp entry with real job
+    removeJob(tempId);
+    upsertJob({ id: data.jobId, status: 'running', message: text, created: Date.now(), rounds: [], reply: null });
+    showNotification('Job queued — you can now close the page and come back later.');
+  } catch (err) {
+    removeJob(tempId);
+    upsertJob({ id: tempId, status: 'error', message: text, error: err.message, created: Date.now(), rounds: [], reply: null });
+  }
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -339,6 +572,7 @@ function newChat() {
       <div class="welcome-icon">🤖</div>
       <h3>Ask Solis anything</h3>
       <p>Runs real Linux commands · reads/writes memory vault · fetches the web</p>
+      <p style="margin-top:6px;color:#2a7a2a;font-size:0.75rem">⚡ Toggle Background mode to submit jobs that keep running after you close the page</p>
       <div class="suggestions">
         <span class="suggestion" onclick="fillInput(this)">What tools do you have?</span>
         <span class="suggestion" onclick="fillInput(this)">What's the server OS and resources?</span>
@@ -358,10 +592,6 @@ function setStatus(s) {
 function scrollBottom() {
   const m = document.getElementById('messages');
   m.scrollTop = m.scrollHeight;
-}
-
-function escHtml(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Minimal markdown → html for agent replies
@@ -388,7 +618,6 @@ function addMessage(role, text) {
   return div;
 }
 
-// Thinking feed element (live, shown while agent is running)
 let feedEl = null;
 function startThinkingFeed() {
   document.getElementById('welcome')?.remove();
@@ -423,9 +652,18 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
 
-  busy = true;
   input.value = '';
   input.style.height = '44px';
+
+  // Background mode: submit job and return immediately
+  if (bgMode) {
+    await submitBackground(text);
+    input.focus();
+    return;
+  }
+
+  // Streaming mode: normal SSE chat
+  busy = true;
   document.getElementById('send-btn').disabled = true;
   setStatus('thinking…');
 
@@ -444,7 +682,6 @@ async function sendMessage() {
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
-    let currentRound = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -462,8 +699,7 @@ async function sendMessage() {
           const pool = evt.poolSize > 1 ? ` · ${evt.poolSize} keys` : '';
           appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}${pool}</div>`);
         } else if (evt.type === 'round') {
-          currentRound = evt.round;
-          appendFeed(`<div class="tf-round">── Round ${currentRound} ──</div>`);
+          appendFeed(`<div class="tf-round">── Round ${evt.round} ──</div>`);
         } else if (evt.type === 'thinking') {
           appendFeed(`<div class="tf-think">💭 ${escHtml(evt.text)}</div>`);
         } else if (evt.type === 'tool_call') {
@@ -496,9 +732,6 @@ async function sendMessage() {
 
 let lastFeedTs = null;
 
-function fmtDur(ms) { return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's'; }
-function fmtTime(iso) { return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
-
 function renderEntry(e) {
   const div = document.createElement('div');
   div.className = 'entry';
@@ -507,7 +740,7 @@ function renderEntry(e) {
   div.innerHTML = `
     <div class="entry-head" onclick="this.closest('.entry').classList.toggle('open')">
       <div style="flex:1;min-width:0">
-        <div class="entry-user">@${escHtml(e.username)} · ${fmtTime(e.timestamp)}</div>
+        <div class="entry-user">@${escHtml(e.username)} · ${new Date(e.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
         <div class="entry-msg">${escHtml(e.userMessage)}</div>
       </div>
       <div class="entry-meta">
@@ -555,6 +788,11 @@ async function pollFeed() {
 
 pollFeed();
 setInterval(pollFeed, 3000);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+renderJobs();
+pollJobs();
 </script>
 </body>
 </html>

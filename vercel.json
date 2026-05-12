@@ -5,11 +5,15 @@
   "functions": {
     "api/webhook.js": { "maxDuration": 300 },
     "api/chat.js":    { "maxDuration": 300 },
+    "api/submit.js":  { "maxDuration": 300 },
+    "api/job.js":     { "maxDuration": 30  },
     "api/activity.js":{ "maxDuration": 30  }
   },
   "routes": [
     { "src": "/webhook",  "dest": "/api/webhook.js"  },
     { "src": "/chat",     "dest": "/api/chat.js"     },
+    { "src": "/submit",   "dest": "/api/submit.js"   },
+    { "src": "/job",      "dest": "/api/job.js"      },
     { "src": "/activity", "dest": "/api/activity.js" }
   ],
   "env": {
