@@ -1,0 +1,44 @@
+# TermuxClawAgent — Windows 10 VM via Docker
+#
+# Runs a full Windows 10 virtual machine with built-in noVNC viewer.
+# Requirements: Docker + KVM support on Linux host (a VPS works perfectly).
+#
+# Usage:
+#   docker compose -f docker-compose-windows.yml up -d
+#
+# Then:
+#   - Web desktop viewer: http://your-server:8006
+#   - Copy windows-bridge.py into the VM via the noVNC terminal
+#   - Start bridge inside Windows, set WINDOWS_BRIDGE_URL in Vercel
+#
+# After setup, set these in Vercel:
+#   WINDOWS_BRIDGE_URL=http://your-server:5000
+#   WINDOWS_BRIDGE_TOKEN=your-secret-token
+
+version: "3"
+
+services:
+  windows:
+    image: dockurr/windows
+    container_name: windows10
+    environment:
+      VERSION: "10"         # Windows 10. Use "11" for Windows 11.
+      RAM_SIZE: "4G"
+      CPU_CORES: "2"
+      DISK_SIZE: "64G"
+      USERNAME: "agent"
+      PASSWORD: "AgentPass123!"
+    devices:
+      - /dev/kvm            # Required: enable KVM on your Linux host
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8006:8006"         # noVNC web viewer (your live desktop)
+      - "3389:3389"         # RDP (optional)
+    volumes:
+      - windows-data:/storage
+    restart: unless-stopped
+    stop_grace_period: 2m
+
+volumes:
+  windows-data:

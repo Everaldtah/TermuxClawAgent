@@ -7,13 +7,18 @@
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:#0a0a0a;color:#d4d4d4;font-family:'Courier New',monospace;min-height:100vh;padding:24px 16px}
-    .container{max-width:820px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+    .container{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
 
-    /* ── Cards ── */
+    /* Cards */
     .card{border:1px solid #1f1f1f;border-radius:12px;background:#111;overflow:hidden}
     .card-body{padding:24px 28px}
+    .section-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #181818;background:#0e0e0e;cursor:default}
+    .section-title{color:#fff;font-size:0.9rem;display:flex;align-items:center;gap:8px}
+    .badge{font-size:0.7rem;color:#444;background:#181818;border:1px solid #222;border-radius:20px;padding:3px 10px;white-space:nowrap}
+    .badge.live{color:#22c55e;border-color:#22c55e44}
+    .badge.ok{color:#22c55e;border-color:#22c55e44}
 
-    /* ── Status card ── */
+    /* Status rows */
     .status-header{display:flex;align-items:center;gap:10px;margin-bottom:4px}
     .dot{width:9px;height:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e88;animation:pulse 2s infinite;flex-shrink:0}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -27,20 +32,14 @@
     a{color:#60a5fa;text-decoration:none}
     a:hover{text-decoration:underline}
 
-    /* ── Section titles ── */
-    .section-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #181818;background:#0e0e0e}
-    .section-title{color:#fff;font-size:0.9rem}
-    .badge{font-size:0.7rem;color:#444;background:#181818;border:1px solid #222;border-radius:20px;padding:3px 10px}
-    .badge.live{color:#22c55e;border-color:#22c55e44}
-
-    /* ── Chat UI ── */
+    /* Chat */
     .chat-wrap{display:flex;flex-direction:column;height:600px}
     .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
     .messages::-webkit-scrollbar{width:4px}
     .messages::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
 
     /* Message bubbles */
-    .msg{display:flex;flex-direction:column;max-width:82%}
+    .msg{display:flex;flex-direction:column;max-width:84%}
     .msg.user{align-self:flex-end;align-items:flex-end}
     .msg.agent{align-self:flex-start;align-items:flex-start}
     .msg-meta{font-size:0.68rem;color:#444;margin-bottom:3px}
@@ -51,13 +50,24 @@
     .msg.agent .bubble pre{background:#0d1117;border:1px solid #1e1e1e;padding:10px;border-radius:6px;overflow-x:auto;margin:6px 0}
     .msg.agent .bubble pre code{background:none;border:none;padding:0}
 
-    /* Thinking / tool feed (while processing) */
-    .thinking-feed{margin:4px 0 6px 0;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:8px 12px;font-size:0.74rem;line-height:1.6;max-height:180px;overflow-y:auto;align-self:flex-start;max-width:100%;width:100%}
+    /* Thinking toggle (persisted after reply) */
+    .think-toggle{margin-top:5px;background:none;border:none;color:#3d2a6a;font-family:inherit;font-size:0.7rem;cursor:pointer;padding:2px 0;text-align:left}
+    .think-toggle:hover{color:#a78bfa}
+    .think-collapse{display:none;margin-top:4px;background:#0d0a1a;border:1px solid #2a1a4a;border-radius:6px;padding:8px 12px;font-size:0.73rem;line-height:1.6;max-height:240px;overflow-y:auto;max-width:100%}
+    .think-collapse.open{display:block}
+    .tc-round{color:#444;font-size:0.66rem;margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em}
+    .tc-think{color:#c084fc;padding-left:8px;border-left:2px solid #7c3aed;margin-bottom:4px;word-break:break-word}
+    .tc-tool{color:#38bdf8;padding-left:8px;border-left:2px solid #0ea5e9;margin-bottom:2px}
+    .tc-result{color:#334155;padding-left:16px;font-size:0.7rem;margin-bottom:4px}
+    .tc-result::before{content:"↳ ";color:#1e3a5f}
+
+    /* Live thinking feed (while processing) */
+    .thinking-feed{margin:4px 0 6px 0;background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:8px 12px;font-size:0.74rem;line-height:1.6;max-height:200px;overflow-y:auto;align-self:flex-start;max-width:100%;width:100%}
     .thinking-feed::-webkit-scrollbar{width:3px}
     .thinking-feed::-webkit-scrollbar-thumb{background:#1a1a1a}
     .tf-round{color:#444;margin-bottom:2px;font-size:0.68rem;text-transform:uppercase;letter-spacing:.06em}
     .tf-think{color:#a78bfa;margin-bottom:3px;padding-left:6px;border-left:2px solid #7c3aed}
-    .tf-tool {color:#38bdf8;padding-left:6px;border-left:2px solid #0ea5e9;margin-bottom:2px}
+    .tf-tool{color:#38bdf8;padding-left:6px;border-left:2px solid #0ea5e9;margin-bottom:2px}
     .tf-result{color:#475569;padding-left:14px;margin-bottom:4px;font-size:0.7rem}
     .tf-result::before{content:"↳ ";color:#1d4ed8}
 
@@ -68,49 +78,87 @@
     .typing span:nth-child(3){animation-delay:.4s}
     @keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
 
+    /* Computer mode message */
+    .computer-msg{align-self:flex-start;max-width:100%;width:100%}
+    .cm-phase{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:0.75rem;color:#555;border-bottom:1px solid #161616;margin-bottom:8px}
+    .cm-phase-dot{width:7px;height:7px;border-radius:50%;background:#f59e0b;animation:pulse 1s infinite;flex-shrink:0}
+    .cm-plan{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:8px}
+    .cm-task{background:#0d1117;border:1px solid #1e1e1e;border-radius:8px;padding:8px 10px;font-size:0.74rem;line-height:1.5}
+    .cm-task-model{font-size:0.65rem;color:#444;margin-bottom:3px;display:flex;align-items:center;gap:4px}
+    .cm-task-model .status-dot{width:6px;height:6px;border-radius:50%;background:#333;flex-shrink:0}
+    .cm-task-model .status-dot.running{background:#f59e0b;animation:pulse 1s infinite}
+    .cm-task-model .status-dot.done{background:#22c55e}
+    .cm-task-model .status-dot.error{background:#ef4444}
+    .cm-task-text{color:#94a3b8}
+    .cm-result-preview{margin-top:4px;font-size:0.68rem;color:#334155;max-height:60px;overflow:hidden}
+    .cm-win-action{background:#0a1a0a;border:1px solid #22c55e22;border-radius:6px;padding:6px 10px;font-size:0.73rem;color:#4ade80;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+
     /* Input bar */
-    .input-bar{display:flex;gap:8px;padding:12px 16px;border-top:1px solid #181818;background:#0e0e0e;flex-wrap:wrap}
+    .input-bar{display:flex;gap:6px;padding:10px 14px;border-top:1px solid #181818;background:#0e0e0e;flex-wrap:wrap;align-items:center}
     .input-bar textarea{flex:1;min-width:0;background:#0a0a0a;border:1px solid #232323;border-radius:8px;color:#d4d4d4;font-family:inherit;font-size:0.85rem;padding:10px 12px;resize:none;height:44px;max-height:140px;outline:none;transition:border-color .2s;overflow:hidden}
     .input-bar textarea:focus{border-color:#3b82f6}
     .input-bar textarea::placeholder{color:#333}
+    .ibar-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:8px;padding:0 11px;font-family:inherit;font-size:0.73rem;cursor:pointer;height:44px;flex-shrink:0;transition:all .2s;white-space:nowrap}
+    .ibar-btn:hover{color:#d4d4d4;border-color:#333}
+    .ibar-btn.active-bg{background:#0a1a0a;color:#22c55e;border-color:#22c55e55}
+    .ibar-btn.active-cpu{background:#0d0a1a;color:#a78bfa;border-color:#7c3aed55}
     .send-btn{background:#1e40af;color:#bfdbfe;border:none;border-radius:8px;padding:0 18px;font-family:inherit;font-size:0.82rem;cursor:pointer;transition:background .2s;flex-shrink:0;height:44px}
     .send-btn:hover:not(:disabled){background:#2563eb}
     .send-btn:disabled{opacity:.4;cursor:not-allowed}
-    .new-chat-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:8px;padding:0 12px;font-family:inherit;font-size:0.75rem;cursor:pointer;height:44px;flex-shrink:0}
-    .new-chat-btn:hover{color:#d4d4d4;border-color:#333}
+    .mode-hint{display:none;padding:5px 14px;font-size:0.7rem;text-align:center;border-top:1px solid #161616}
+    .mode-hint.show-bg{display:block;background:#0a1a0a;color:#22c55e88;border-color:#22c55e22}
+    .mode-hint.show-cpu{display:block;background:#0d0a1a;color:#a78bfa88;border-color:#7c3aed22}
 
-    /* Background mode button */
-    .bg-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:8px;padding:0 12px;font-family:inherit;font-size:0.75rem;cursor:pointer;height:44px;flex-shrink:0;transition:all .2s;white-space:nowrap}
-    .bg-btn:hover{color:#d4d4d4;border-color:#333}
-    .bg-btn.active{background:#0a1a0a;color:#22c55e;border-color:#22c55e55}
-
-    /* Background mode hint bar */
-    .bg-hint{display:none;padding:6px 16px;background:#0a1a0a;border-top:1px solid #22c55e22;font-size:0.72rem;color:#22c55e88;text-align:center}
-    .bg-hint.show{display:block}
-
-    /* Welcome state */
+    /* Welcome */
     .welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:#333;font-size:0.83rem;text-align:center;padding:24px}
     .welcome-icon{font-size:2rem;margin-bottom:4px}
     .welcome h3{color:#444;font-size:0.95rem;font-weight:normal}
+    .welcome-modes{display:flex;gap:10px;justify-content:center;margin-top:6px;flex-wrap:wrap}
+    .mode-pill{background:#141414;border:1px solid #1e1e1e;border-radius:20px;padding:4px 12px;font-size:0.72rem;color:#555}
     .suggestions{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px}
     .suggestion{background:#141414;border:1px solid #1e1e1e;border-radius:8px;padding:7px 12px;font-size:0.77rem;color:#555;cursor:pointer;transition:all .2s}
     .suggestion:hover{color:#d4d4d4;border-color:#333;background:#181818}
 
-    /* ── Background Jobs panel ── */
+    /* ── Desktop Viewer ── */
+    .desktop-wrap{padding:0}
+    .desktop-screen{position:relative;background:#000;border-top:1px solid #181818;display:flex;align-items:center;justify-content:center;min-height:200px}
+    .desktop-screen img{max-width:100%;display:block;cursor:crosshair}
+    .desktop-overlay{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none}
+    .desktop-action-bar{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#0e0e0e;border-top:1px solid #181818;font-size:0.73rem;color:#555;flex-wrap:wrap}
+    .desktop-action-bar .dab-status{flex:1;color:#475569;font-size:0.7rem}
+    .desktop-not-configured{color:#2a2a2a;font-size:0.82rem;text-align:center;padding:32px;line-height:1.8}
+    .desktop-not-configured code{color:#444;background:#141414;padding:2px 6px;border-radius:3px;font-size:0.78rem}
+    .dab-btn{background:#141414;border:1px solid #222;border-radius:6px;padding:3px 8px;color:#555;font-family:inherit;font-size:0.7rem;cursor:pointer}
+    .dab-btn:hover{color:#d4d4d4;border-color:#333}
+    .click-indicator{position:absolute;width:20px;height:20px;border-radius:50%;border:2px solid #22c55e;pointer-events:none;transform:translate(-50%,-50%);animation:clickFade .6s ease-out forwards}
+    @keyframes clickFade{0%{opacity:1;transform:translate(-50%,-50%) scale(0.5)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.8)}}
+
+    /* ── Background Jobs ── */
     .jobs-list{padding:0}
     .job-entry{border-bottom:1px solid #161616;padding:12px 16px}
     .job-entry:last-child{border-bottom:none}
     .job-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:6px}
     .job-msg{flex:1;font-size:0.84rem;color:#d4d4d4;word-break:break-word;line-height:1.4}
-    .job-meta{display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+    .job-meta{display:flex;gap:5px;align-items:center;flex-shrink:0;flex-wrap:wrap}
     .job-reply{background:#0d1117;border-left:2px solid #22c55e;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#86efac;line-height:1.5;word-break:break-word;margin-top:4px}
-    .job-error{background:#0d1117;border-left:2px solid #ef4444;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#fca5a5;line-height:1.5;margin-top:4px}
-    .job-progress{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:6px 10px;font-size:0.72rem;color:#475569;margin-top:4px;line-height:1.5}
+    .job-error{background:#0d1117;border-left:2px solid #ef4444;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#fca5a5;margin-top:4px}
+    .job-rounds{margin-top:6px;display:none}
+    .job-rounds.open{display:block}
+    .jr-toggle{background:none;border:none;color:#334155;font-family:inherit;font-size:0.7rem;cursor:pointer;padding:2px 0}
+    .jr-toggle:hover{color:#94a3b8}
+    .jr-round{background:#0d0d0d;border:1px solid #161616;border-radius:6px;padding:6px 10px;margin-top:4px;font-size:0.72rem}
+    .jr-rlabel{color:#333;font-size:0.65rem;text-transform:uppercase;margin-bottom:3px;letter-spacing:.06em}
+    .jr-think{color:#c084fc;border-left:2px solid #7c3aed;padding-left:6px;margin-bottom:4px;word-break:break-word;line-height:1.5}
+    .jr-tool{color:#38bdf8;border-left:2px solid #0ea5e9;padding-left:6px;margin-bottom:2px}
+    .jr-res{color:#334155;padding-left:12px;font-size:0.68rem}
+    .jr-res::before{content:"↳ "}
     .job-actions{display:flex;gap:6px;margin-top:8px}
     .job-load-btn{background:#1e3a5f;color:#bfdbfe;border:none;border-radius:6px;padding:4px 10px;font-family:inherit;font-size:0.72rem;cursor:pointer}
     .job-load-btn:hover{background:#2563eb}
     .job-del-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:6px;padding:4px 8px;font-family:inherit;font-size:0.72rem;cursor:pointer}
     .job-del-btn:hover{color:#ef4444;border-color:#ef444444}
+
+    /* Tags */
     .tag{font-size:0.67rem;padding:2px 6px;border-radius:10px;background:#141414;border:1px solid #1e1e1e;color:#555;white-space:nowrap}
     .tag.running{color:#f59e0b;border-color:#f59e0b33;animation:tpulse 1.5s infinite}
     @keyframes tpulse{0%,100%{opacity:1}50%{opacity:.5}}
@@ -119,12 +167,7 @@
     .tag.rounds{color:#a78bfa;border-color:#a78bfa33}
     .tag.dur{color:#60a5fa;border-color:#60a5fa33}
 
-    /* ── Notification banner ── */
-    .notif-banner{position:fixed;top:16px;right:16px;z-index:9999;background:#0a1a0a;border:1px solid #22c55e55;border-radius:10px;padding:10px 16px;font-size:0.8rem;color:#22c55e;max-width:320px;animation:slideIn .3s ease;box-shadow:0 4px 20px #00000088}
-    @keyframes slideIn{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
-    .notif-banner.error{background:#1a0a0a;border-color:#ef444455;color:#fca5a5}
-
-    /* ── Activity feed ── */
+    /* Activity feed */
     .feed-body{padding:0}
     .empty{color:#2a2a2a;font-size:0.82rem;text-align:center;padding:32px 0}
     .entry{border-bottom:1px solid #161616}
@@ -148,6 +191,11 @@
     .tool-res::before{content:"↳ ";color:#1e3a5f}
     .reply-box{margin-top:8px;background:#0d1117;border-left:2px solid #22c55e;padding:6px 10px;border-radius:3px;font-size:0.76rem;color:#86efac;line-height:1.5;word-break:break-word}
     .reply-box::before{content:"Reply  ";color:#14532d;font-size:0.68rem}
+
+    /* API config */
+    .notif-banner{position:fixed;top:16px;right:16px;z-index:9999;background:#0a1a0a;border:1px solid #22c55e55;border-radius:10px;padding:10px 16px;font-size:0.8rem;color:#22c55e;max-width:320px;box-shadow:0 4px 20px #00000088;animation:slideIn .3s ease}
+    @keyframes slideIn{from{transform:translateY(-20px);opacity:0}to{transform:translateY(0);opacity:1}}
+    .notif-banner.err{background:#1a0a0a;border-color:#ef444455;color:#fca5a5}
   </style>
 </head>
 <body>
@@ -157,12 +205,12 @@
   <div class="card">
     <div class="card-body">
       <div class="status-header"><div class="dot"></div><h1>Solis — TermuxClawAgent</h1></div>
-      <p class="sub">Cloud agent on Vercel · NVIDIA NIM · GitHub sync · Background jobs</p>
+      <p class="sub">Cloud agent · Multi-model Computer Mode · Windows Desktop Control · Background jobs</p>
       <div class="row"><span class="label">Status</span><span class="value ok">● Online</span></div>
-      <div class="row"><span class="label">Model</span><span class="value">moonshotai/kimi-k2.6</span></div>
-      <div class="row"><span class="label">Shell</span><span class="value ok">✓ Amazon Linux</span></div>
+      <div class="row"><span class="label">Primary Model</span><span class="value">moonshotai/kimi-k2.6</span></div>
+      <div class="row"><span class="label">Computer Mode</span><span class="value ok">✓ DeepSeek · GLM · Qwen · MiniMax</span></div>
+      <div class="row"><span class="label">Windows Desktop</span><span class="value" id="win-status">checking…</span></div>
       <div class="row"><span class="label">Background Jobs</span><span class="value ok">✓ Runs after page close</span></div>
-      <div class="row"><span class="label">Storage</span><span class="value">GitHub two-way sync</span></div>
       <div class="row"><span class="label">Telegram</span><span class="value"><a href="https://t.me/SolisTermuxclaw_bot" target="_blank">@SolisTermuxclaw_bot →</a></span></div>
     </div>
   </div>
@@ -174,41 +222,29 @@
       <span class="badge" id="api-chevron">▼ expand</span>
     </div>
     <div id="api-panel" style="display:none;padding:20px 24px;border-top:1px solid #181818">
-      <p style="color:#555;font-size:0.78rem;margin-bottom:16px;line-height:1.6">
-        Use your own API key to avoid hitting rate limits. Keys are saved in your browser only and never stored on our servers.
-        Leave blank to use the shared server key.
-      </p>
-
+      <p style="color:#555;font-size:0.78rem;margin-bottom:16px;line-height:1.6">Your API keys are saved locally in the browser and never stored on the server. Leave blank to use server keys.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
         <div>
           <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">Provider</label>
           <select id="api-provider" onchange="onProviderChange()" style="width:100%;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none">
-            <option value="nvidia">NVIDIA NIM</option>
-            <option value="openai">OpenAI</option>
-            <option value="groq">Groq</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="xai">xAI (Grok)</option>
-            <option value="mistral">Mistral</option>
-            <option value="together">Together AI</option>
+            <option value="nvidia">NVIDIA NIM</option><option value="openai">OpenAI</option><option value="groq">Groq</option>
+            <option value="openrouter">OpenRouter</option><option value="deepseek">DeepSeek</option>
+            <option value="xai">xAI (Grok)</option><option value="mistral">Mistral</option><option value="together">Together AI</option>
           </select>
         </div>
         <div>
-          <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">Model <span style="color:#333">(optional override)</span></label>
-          <input id="api-model" type="text" placeholder="use provider default" style="width:100%;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#232323'" />
+          <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">Model override</label>
+          <input id="api-model" type="text" placeholder="use provider default" style="width:100%;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none"/>
         </div>
       </div>
-
       <div style="margin-bottom:14px">
         <label style="display:block;font-size:0.72rem;color:#555;margin-bottom:5px">API Key</label>
         <div style="display:flex;gap:8px">
-          <input id="api-key" type="password" placeholder="Paste your API key here…" style="flex:1;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='#3b82f6'" onblur="this.style.borderColor='#232323'" />
-          <button onclick="toggleKeyVisibility()" style="background:#141414;border:1px solid #222;border-radius:7px;color:#555;padding:0 12px;cursor:pointer;font-size:0.8rem;flex-shrink:0" id="eye-btn">show</button>
+          <input id="api-key" type="password" placeholder="Paste your API key…" style="flex:1;background:#0a0a0a;border:1px solid #232323;border-radius:7px;color:#d4d4d4;font-family:inherit;font-size:0.83rem;padding:9px 10px;outline:none"/>
+          <button onclick="toggleKeyVis()" id="eye-btn" style="background:#141414;border:1px solid #222;border-radius:7px;color:#555;padding:0 12px;cursor:pointer;font-size:0.8rem;flex-shrink:0">show</button>
         </div>
       </div>
-
       <div id="provider-hint" style="background:#0d1117;border:1px solid #1a1a1a;border-radius:6px;padding:10px 12px;font-size:0.74rem;color:#475569;margin-bottom:14px;line-height:1.6"></div>
-
       <div style="display:flex;gap:8px">
         <button onclick="saveApiConfig()" style="background:#1e3a5f;color:#bfdbfe;border:none;border-radius:7px;padding:8px 18px;font-family:inherit;font-size:0.82rem;cursor:pointer">Save</button>
         <button onclick="clearApiConfig()" style="background:#0e0e0e;color:#555;border:1px solid #222;border-radius:7px;padding:8px 18px;font-family:inherit;font-size:0.82rem;cursor:pointer">Clear</button>
@@ -227,22 +263,58 @@
         <div class="welcome" id="welcome">
           <div class="welcome-icon">🤖</div>
           <h3>Ask Solis anything</h3>
-          <p>Runs real Linux commands · reads/writes memory vault · fetches the web</p>
-          <p style="margin-top:6px;color:#2a7a2a;font-size:0.75rem">⚡ Toggle Background mode to submit jobs that keep running after you close the page</p>
+          <p>Real Linux commands · memory vault · multi-model analysis · Windows desktop</p>
+          <div class="welcome-modes">
+            <span class="mode-pill">💬 Chat — live streaming</span>
+            <span class="mode-pill">⚡ Background — runs after close</span>
+            <span class="mode-pill">🖥 Computer — 4 AI specialists + Windows</span>
+          </div>
           <div class="suggestions">
             <span class="suggestion" onclick="fillInput(this)">What tools do you have?</span>
-            <span class="suggestion" onclick="fillInput(this)">What's the server OS and resources?</span>
-            <span class="suggestion" onclick="fillInput(this)">Search the web for latest AI news</span>
+            <span class="suggestion" onclick="fillInput(this)">Analyze this problem from multiple angles</span>
+            <span class="suggestion" onclick="fillInput(this)">What's on the Windows desktop right now?</span>
             <span class="suggestion" onclick="fillInput(this)">Write and run a Python script</span>
           </div>
         </div>
       </div>
-      <div class="bg-hint" id="bg-hint">⚡ Background mode — message will be queued on the server. You can close this page and check results in the Jobs panel below.</div>
+      <div class="mode-hint" id="mode-hint"></div>
       <div class="input-bar">
         <textarea id="input" placeholder="Ask Solis anything…" rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-        <button class="new-chat-btn" onclick="newChat()" title="New session">↺</button>
-        <button class="bg-btn" id="bg-btn" onclick="toggleBgMode()" title="Toggle background mode — jobs run even after you close the page">⚡ Background</button>
+        <button class="ibar-btn" onclick="newChat()" title="New chat">↺</button>
+        <button class="ibar-btn" id="bg-btn" onclick="setMode('bg')" title="Background mode — runs after you close the page">⚡ BG</button>
+        <button class="ibar-btn" id="cpu-btn" onclick="setMode('cpu')" title="Computer mode — 4 specialist models + Windows desktop">🖥 CPU</button>
         <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Windows Desktop Viewer -->
+  <div class="card" id="desktop-card">
+    <div class="section-head" style="cursor:pointer" onclick="toggleDesktop()">
+      <span class="section-title">🖥 Windows Desktop <span id="desktop-pill" class="badge" style="margin-left:6px">checking…</span></span>
+      <span class="badge" id="desktop-chevron">▼ expand</span>
+    </div>
+    <div id="desktop-panel" style="display:none">
+      <div class="desktop-wrap">
+        <div class="desktop-screen" id="desktop-screen">
+          <div class="desktop-not-configured" id="desktop-not-configured">
+            <p style="color:#444;margin-bottom:12px">Windows desktop not connected.</p>
+            <p>Run the bridge script on your Windows machine:</p>
+            <p style="margin:8px 0"><code>pip install flask pyautogui Pillow</code></p>
+            <p><code>python scripts/windows-bridge.py --token your-token</code></p>
+            <p style="margin-top:12px;color:#333">Then set <code>WINDOWS_BRIDGE_URL</code> and <code>WINDOWS_BRIDGE_TOKEN</code> in Vercel → Redeploy.</p>
+            <p style="margin-top:8px;color:#2a5a2a;font-size:0.75rem">Or spin up a full Windows 10 VM: <code>docker compose -f scripts/docker-compose-windows.yml up -d</code></p>
+          </div>
+          <img id="desktop-img" src="" alt="" style="display:none;max-width:100%" onclick="desktopClick(event)" />
+        </div>
+        <div class="desktop-action-bar" id="desktop-action-bar" style="display:none">
+          <span class="dab-status" id="dab-status">ready</span>
+          <button class="dab-btn" onclick="takeScreenshot()">📷 refresh</button>
+          <button class="dab-btn" onclick="sendWinKey('win')">⊞ Win</button>
+          <button class="dab-btn" onclick="sendWinHotkey(['ctrl','alt','delete'])">Ctrl+Alt+Del</button>
+          <button class="dab-btn" onclick="sendWinKey('escape')">Esc</button>
+          <label style="font-size:0.7rem;color:#444">Click-thru: <input type="checkbox" id="click-thru" checked style="cursor:pointer"/></label>
+        </div>
       </div>
     </div>
   </div>
@@ -254,11 +326,11 @@
       <span class="badge" id="jobs-badge">0 jobs</span>
     </div>
     <div class="jobs-list" id="jobs-list">
-      <p class="empty">No background jobs yet. Toggle ⚡ Background and submit a message — it will keep running after you close the page.</p>
+      <p class="empty">No background jobs. Toggle ⚡ BG and submit a message to queue a job that runs after you close the page.</p>
     </div>
   </div>
 
-  <!-- Activity feed -->
+  <!-- Telegram Activity -->
   <div class="card">
     <div class="section-head">
       <span class="section-title">Telegram Activity Feed</span>
@@ -270,373 +342,136 @@
   </div>
 
 </div>
-
 <script>
-// ── API config panel ──────────────────────────────────────────────────────────
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
-const PROVIDER_HINTS = {
-  nvidia:     'Get a key at <a href="https://build.nvidia.com" target="_blank">build.nvidia.com</a> → free tier available. Default model: moonshotai/kimi-k2.6',
-  openai:     'Get a key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com</a>. Default model: gpt-4o',
-  groq:       'Get a free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a> — very fast inference. Default model: llama-3.3-70b-versatile',
-  openrouter: 'Get a key at <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai</a> — access 200+ models. Default model: openai/gpt-4o',
-  deepseek:   'Get a key at <a href="https://platform.deepseek.com" target="_blank">platform.deepseek.com</a> — very affordable. Default model: deepseek-chat',
-  xai:        'Get a key at <a href="https://console.x.ai" target="_blank">console.x.ai</a>. Default model: grok-2',
-  mistral:    'Get a key at <a href="https://console.mistral.ai" target="_blank">console.mistral.ai</a>. Default model: mistral-large-latest',
-  together:   'Get a key at <a href="https://api.together.xyz" target="_blank">api.together.xyz</a> — open source models. Default model: Llama-3-70b',
-};
+function escHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmtDur(ms){if(!ms)return'';return ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s';}
+function fmtTime(ts){return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+function scrollBottom(){const m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
 
-function toggleApiPanel() {
-  const panel = document.getElementById('api-panel');
-  const chevron = document.getElementById('api-chevron');
-  const open = panel.style.display === 'block';
-  panel.style.display = open ? 'none' : 'block';
-  chevron.textContent = open ? '▼ expand' : '▲ collapse';
-  if (!open) onProviderChange();
+function renderMd(t){
+  return escHtml(t)
+    .replace(/```([\s\S]*?)```/g,(_,c)=>`<pre><code>${c.trim()}</code></pre>`)
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/^### (.+)$/gm,'<strong style="color:#a78bfa">$1</strong>')
+    .replace(/^## (.+)$/gm,'<strong style="color:#d4d4d4;font-size:0.9em">$1</strong>')
+    .replace(/\n/g,'<br>');
 }
 
-function onProviderChange() {
-  const p = document.getElementById('api-provider').value;
-  document.getElementById('provider-hint').innerHTML = PROVIDER_HINTS[p] || '';
-}
+// ── API Config ────────────────────────────────────────────────────────────────
 
-function toggleKeyVisibility() {
-  const inp = document.getElementById('api-key');
-  const btn = document.getElementById('eye-btn');
-  inp.type = inp.type === 'password' ? 'text' : 'password';
-  btn.textContent = inp.type === 'password' ? 'show' : 'hide';
-}
-
-function saveApiConfig() {
-  const key      = document.getElementById('api-key').value.trim();
-  const provider = document.getElementById('api-provider').value;
-  const model    = document.getElementById('api-model').value.trim();
-  if (key) localStorage.setItem('solis_api_key', key);
-  localStorage.setItem('solis_provider', provider);
-  if (model) localStorage.setItem('solis_model', model);
-  else localStorage.removeItem('solis_model');
-  updateApiBadge();
-  toggleApiPanel();
-}
-
-function clearApiConfig() {
-  localStorage.removeItem('solis_api_key');
-  localStorage.removeItem('solis_provider');
-  localStorage.removeItem('solis_model');
-  document.getElementById('api-key').value = '';
-  document.getElementById('api-model').value = '';
-  document.getElementById('api-provider').value = 'nvidia';
-  updateApiBadge();
-}
-
-function updateApiBadge() {
-  const key = localStorage.getItem('solis_api_key');
-  const badge = document.getElementById('api-set-badge');
-  badge.style.display = key ? 'inline' : 'none';
-}
-
-function getApiConfig() {
-  return {
-    userApiKey:   localStorage.getItem('solis_api_key')  || undefined,
-    userProvider: localStorage.getItem('solis_provider') || undefined,
-    userModel:    localStorage.getItem('solis_model')    || undefined,
-  };
-}
-
-(function restoreApiConfig() {
-  const k = localStorage.getItem('solis_api_key');
-  const p = localStorage.getItem('solis_provider');
-  const m = localStorage.getItem('solis_model');
-  if (k) document.getElementById('api-key').value = k;
-  if (p) document.getElementById('api-provider').value = p;
-  if (m) document.getElementById('api-model').value = m;
-  updateApiBadge();
-})();
+const PHINTS={nvidia:'build.nvidia.com — free tier. Model: moonshotai/kimi-k2.6',openai:'platform.openai.com. Model: gpt-4o',groq:'console.groq.com — very fast. Model: llama-3.3-70b',openrouter:'openrouter.ai — 200+ models.',deepseek:'platform.deepseek.com.',xai:'console.x.ai. Model: grok-2',mistral:'console.mistral.ai.',together:'api.together.xyz.'};
+function toggleApiPanel(){const p=document.getElementById('api-panel');const c=document.getElementById('api-chevron');const o=p.style.display==='block';p.style.display=o?'none':'block';c.textContent=o?'▼ expand':'▲ collapse';if(!o)onProviderChange();}
+function onProviderChange(){document.getElementById('provider-hint').textContent=PHINTS[document.getElementById('api-provider').value]||'';}
+function toggleKeyVis(){const i=document.getElementById('api-key');const b=document.getElementById('eye-btn');i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'show':'hide';}
+function saveApiConfig(){const k=document.getElementById('api-key').value.trim();const p=document.getElementById('api-provider').value;const m=document.getElementById('api-model').value.trim();if(k)localStorage.setItem('solis_api_key',k);localStorage.setItem('solis_provider',p);if(m)localStorage.setItem('solis_model',m);else localStorage.removeItem('solis_model');updateApiBadge();toggleApiPanel();}
+function clearApiConfig(){['solis_api_key','solis_provider','solis_model'].forEach(k=>localStorage.removeItem(k));document.getElementById('api-key').value='';document.getElementById('api-model').value='';document.getElementById('api-provider').value='nvidia';updateApiBadge();}
+function updateApiBadge(){document.getElementById('api-set-badge').style.display=localStorage.getItem('solis_api_key')?'inline':'none';}
+function getApiConfig(){return{userApiKey:localStorage.getItem('solis_api_key')||undefined,userProvider:localStorage.getItem('solis_provider')||undefined,userModel:localStorage.getItem('solis_model')||undefined};}
+(function(){const k=localStorage.getItem('solis_api_key');const p=localStorage.getItem('solis_provider');const m=localStorage.getItem('solis_model');if(k)document.getElementById('api-key').value=k;if(p)document.getElementById('api-provider').value=p;if(m)document.getElementById('api-model').value=m;updateApiBadge();})();
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-function getSessionId() {
-  let id = localStorage.getItem('solis_session');
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem('solis_session', id); }
-  return id;
+function getSessionId(){let id=localStorage.getItem('solis_session');if(!id){id=crypto.randomUUID();localStorage.setItem('solis_session',id);}return id;}
+
+// ── Input mode ────────────────────────────────────────────────────────────────
+
+let currentMode = 'chat'; // 'chat' | 'bg' | 'cpu'
+
+function setMode(m) {
+  if (currentMode === m) { currentMode = 'chat'; } else { currentMode = m; }
+  document.getElementById('bg-btn').classList.toggle('active-bg', currentMode==='bg');
+  document.getElementById('cpu-btn').classList.toggle('active-cpu', currentMode==='cpu');
+  const hint = document.getElementById('mode-hint');
+  hint.className = 'mode-hint';
+  if (currentMode==='bg') { hint.classList.add('show-bg'); hint.textContent='⚡ Background mode — job queued on server, runs after you close the page.'; }
+  else if (currentMode==='cpu') { hint.classList.add('show-cpu'); hint.textContent='🖥 Computer mode — 4 specialist models work in parallel + Windows desktop control.'; }
+  document.getElementById('input').placeholder = currentMode==='bg' ? 'Submit a background job…' : currentMode==='cpu' ? 'Describe a complex task for the AI computer…' : 'Ask Solis anything…';
 }
 
-// ── Background mode ───────────────────────────────────────────────────────────
-
-let bgMode = false;
-
-function toggleBgMode() {
-  bgMode = !bgMode;
-  const btn = document.getElementById('bg-btn');
-  const hint = document.getElementById('bg-hint');
-  btn.classList.toggle('active', bgMode);
-  hint.classList.toggle('show', bgMode);
-  if (bgMode) {
-    document.getElementById('input').placeholder = 'Submit a background job — runs even after you close the page…';
-  } else {
-    document.getElementById('input').placeholder = 'Ask Solis anything…';
-  }
-}
-
-// ── Background Jobs storage ───────────────────────────────────────────────────
-
-function getJobs() {
-  try { return JSON.parse(localStorage.getItem('solis_jobs') || '[]'); } catch { return []; }
-}
-
-function saveJobs(jobs) {
-  localStorage.setItem('solis_jobs', JSON.stringify(jobs.slice(0, 30)));
-}
-
-function upsertJob(job) {
-  const jobs = getJobs();
-  const idx = jobs.findIndex(j => j.id === job.id);
-  if (idx !== -1) jobs[idx] = job;
-  else jobs.unshift(job);
-  saveJobs(jobs);
-  renderJobs();
-}
-
-function removeJob(jobId) {
-  const jobs = getJobs().filter(j => j.id !== jobId);
-  saveJobs(jobs);
-  renderJobs();
-}
-
-function escHtml(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function fmtDur(ms) { if (!ms) return ''; return ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(1) + 's'; }
-function fmtTime(ts) { return new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
-
-function renderJobs() {
-  const jobs = getJobs();
-  const badge = document.getElementById('jobs-badge');
-  badge.textContent = jobs.length + ' job' + (jobs.length !== 1 ? 's' : '');
-  const running = jobs.filter(j => j.status === 'running').length;
-  if (running) {
-    badge.textContent += ' · ' + running + ' running';
-    badge.className = 'badge live';
-  } else {
-    badge.className = 'badge';
-  }
-
-  const container = document.getElementById('jobs-list');
-  if (!jobs.length) {
-    container.innerHTML = '<p class="empty">No background jobs yet. Toggle ⚡ Background and submit a message — it will keep running after you close the page.</p>';
-    return;
-  }
-
-  container.innerHTML = jobs.map(job => {
-    const roundCount = (job.rounds || []).length;
-    const preview = job.reply ? job.reply.slice(0, 200) + (job.reply.length > 200 ? '…' : '') : '';
-    const progressInfo = job.status === 'running' && roundCount > 0
-      ? `<div class="job-progress">Round ${roundCount} in progress… (poll auto-updates every 5s)</div>`
-      : '';
-    const replyBlock = job.status === 'done' && preview
-      ? `<div class="job-reply">${escHtml(preview)}</div>`
-      : '';
-    const errorBlock = job.status === 'error' && job.error
-      ? `<div class="job-error">Error: ${escHtml(job.error)}</div>`
-      : '';
-    const durTag = job.durationMs ? `<span class="tag dur">${fmtDur(job.durationMs)}</span>` : '';
-    const roundTag = roundCount ? `<span class="tag rounds">${roundCount}r</span>` : '';
-    const actions = job.status === 'done'
-      ? `<div class="job-actions">
-           <button class="job-load-btn" onclick="loadJobToChat('${escHtml(job.id)}')">Load reply in chat</button>
-           <button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕</button>
-         </div>`
-      : job.status === 'error'
-        ? `<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`
-        : '';
-    return `
-      <div class="job-entry">
-        <div class="job-head">
-          <div class="job-msg">${escHtml(job.message.slice(0, 120))}${job.message.length > 120 ? '…' : ''}</div>
-          <div class="job-meta">
-            <span class="tag ${job.status}">${job.status}</span>
-            ${roundTag}${durTag}
-            <span class="tag">${fmtTime(job.created)}</span>
-          </div>
-        </div>
-        ${progressInfo}${replyBlock}${errorBlock}${actions}
-      </div>`;
-  }).join('');
-}
-
-// ── Job polling ───────────────────────────────────────────────────────────────
-
-async function pollJobs() {
-  const jobs = getJobs();
-  const running = jobs.filter(j => j.status === 'running');
-  if (!running.length) return;
-
-  await Promise.all(running.map(async job => {
-    try {
-      const r = await fetch('/job?id=' + encodeURIComponent(job.id));
-      if (!r.ok) return;
-      const data = await r.json();
-      const wasRunning = job.status === 'running';
-      upsertJob({ ...job, ...data });
-      if (wasRunning && data.status === 'done') {
-        showNotification('Job done: ' + job.message.slice(0, 50));
-      } else if (wasRunning && data.status === 'error') {
-        showNotification('Job error: ' + (data.error || 'unknown'), true);
-      }
-    } catch {}
-  }));
-}
-
-setInterval(pollJobs, 5000);
-
-// ── Notification banner ───────────────────────────────────────────────────────
-
-function showNotification(msg, isError = false) {
-  const banner = document.createElement('div');
-  banner.className = 'notif-banner' + (isError ? ' error' : '');
-  banner.textContent = (isError ? '✕ ' : '✓ ') + msg;
-  document.body.appendChild(banner);
-  setTimeout(() => banner.remove(), 6000);
-
-  if (!isError && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    try { new Notification('Solis — job complete', { body: msg }); } catch {}
-  }
-}
-
-// Request notification permission on first job submit
-function maybeRequestNotifications() {
-  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-    Notification.requestPermission().catch(() => {});
-  }
-}
-
-// ── Load job result into chat ─────────────────────────────────────────────────
-
-function loadJobToChat(jobId) {
-  const jobs = getJobs();
-  const job = jobs.find(j => j.id === jobId);
-  if (!job) return;
-  addMessage('user', job.message);
-  if (job.reply) addMessage('agent', job.reply);
-}
-
-// ── Submit a background job ───────────────────────────────────────────────────
-
-async function submitBackground(text) {
-  maybeRequestNotifications();
-  const tempId = 'tmp-' + Date.now();
-  upsertJob({ id: tempId, status: 'running', message: text, created: Date.now(), rounds: [], reply: null });
-
-  try {
-    const r = await fetch('/submit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Submit failed');
-
-    // Replace temp entry with real job
-    removeJob(tempId);
-    upsertJob({ id: data.jobId, status: 'running', message: text, created: Date.now(), rounds: [], reply: null });
-    showNotification('Job queued — you can now close the page and come back later.');
-  } catch (err) {
-    removeJob(tempId);
-    upsertJob({ id: tempId, status: 'error', message: text, error: err.message, created: Date.now(), rounds: [], reply: null });
-  }
-}
-
-// ── Chat ──────────────────────────────────────────────────────────────────────
+// ── Chat helpers ──────────────────────────────────────────────────────────────
 
 let busy = false;
-
-function fillInput(el) {
-  document.getElementById('input').value = el.textContent;
-  document.getElementById('input').focus();
-  autoResize(document.getElementById('input'));
-}
-
-function autoResize(el) {
-  el.style.height = '44px';
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
-}
-
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-
-function newChat() {
-  localStorage.removeItem('solis_session');
-  document.getElementById('messages').innerHTML = `
-    <div class="welcome" id="welcome">
-      <div class="welcome-icon">🤖</div>
-      <h3>Ask Solis anything</h3>
-      <p>Runs real Linux commands · reads/writes memory vault · fetches the web</p>
-      <p style="margin-top:6px;color:#2a7a2a;font-size:0.75rem">⚡ Toggle Background mode to submit jobs that keep running after you close the page</p>
-      <div class="suggestions">
-        <span class="suggestion" onclick="fillInput(this)">What tools do you have?</span>
-        <span class="suggestion" onclick="fillInput(this)">What's the server OS and resources?</span>
-        <span class="suggestion" onclick="fillInput(this)">Search the web for latest AI news</span>
-        <span class="suggestion" onclick="fillInput(this)">Write and run a Python script</span>
-      </div>
-    </div>`;
-  setStatus('ready');
-}
-
-function setStatus(s) {
-  const el = document.getElementById('chat-status');
-  el.textContent = s;
-  el.className = 'badge' + (s === 'thinking…' ? ' live' : '');
-}
-
-function scrollBottom() {
-  const m = document.getElementById('messages');
-  m.scrollTop = m.scrollHeight;
-}
-
-// Minimal markdown → html for agent replies
-function renderMd(text) {
-  return escHtml(text)
-    .replace(/```([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`)
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>');
-}
+function fillInput(el){document.getElementById('input').value=el.textContent;document.getElementById('input').focus();autoResize(document.getElementById('input'));}
+function autoResize(el){el.style.height='44px';el.style.height=Math.min(el.scrollHeight,140)+'px';}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
+function newChat(){localStorage.removeItem('solis_session');document.getElementById('messages').innerHTML='<div class="welcome" id="welcome"><div class="welcome-icon">🤖</div><h3>Ask Solis anything</h3><p>Real Linux commands · multi-model analysis · Windows desktop</p></div>';setStatus('ready');}
+function setStatus(s){const el=document.getElementById('chat-status');el.textContent=s;el.className='badge'+(s==='thinking…'||s==='planning…'||s==='running…'?' live':'');}
 
 function addMessage(role, text) {
   document.getElementById('welcome')?.remove();
   const m = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `msg ${role}`;
-  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  div.innerHTML = `
-    <div class="msg-meta">${role === 'user' ? 'You' : 'Solis'} · ${now}</div>
-    <div class="bubble">${role === 'agent' ? renderMd(text) : escHtml(text)}</div>`;
-  m.appendChild(div);
-  scrollBottom();
-  return div;
+  const now = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  div.innerHTML = `<div class="msg-meta">${role==='user'?'You':'Solis'} · ${now}</div><div class="bubble">${role==='agent'?renderMd(text):escHtml(text)}</div>`;
+  m.appendChild(div); scrollBottom(); return div;
 }
 
+// ── Thinking persistence ──────────────────────────────────────────────────────
+
+function attachThinkingToggle(msgEl, rounds) {
+  if (!rounds || !rounds.length) return;
+  const hasContent = rounds.some(r => r.thinking || (r.toolCalls && r.toolCalls.length));
+  if (!hasContent) return;
+
+  const toggle = document.createElement('button');
+  toggle.className = 'think-toggle';
+  const stepCount = rounds.reduce((n,r) => n + (r.thinking?1:0) + (r.toolCalls?.length||0), 0);
+  toggle.textContent = `▶ reasoning (${stepCount} steps, ${rounds.length} rounds)`;
+
+  const box = document.createElement('div');
+  box.className = 'think-collapse';
+
+  for (const r of rounds) {
+    const rDiv = document.createElement('div');
+    let html = `<div class="tc-round">── Round ${r.round} ──</div>`;
+    if (r.thinking) html += `<div class="tc-think">💭 ${escHtml(r.thinking)}</div>`;
+    for (const tc of (r.toolCalls||[])) {
+      html += `<div class="tc-tool">🔧 <strong>${escHtml(tc.tool)}</strong> ${escHtml(tc.args)}</div>`;
+      if (tc.result) html += `<div class="tc-result">${escHtml(tc.result)}</div>`;
+    }
+    rDiv.innerHTML = html;
+    box.appendChild(rDiv);
+  }
+
+  toggle.onclick = () => {
+    box.classList.toggle('open');
+    const open = box.classList.contains('open');
+    toggle.textContent = (open?'▼':'▶') + ` reasoning (${stepCount} steps, ${rounds.length} rounds)`;
+  };
+
+  msgEl.appendChild(toggle);
+  msgEl.appendChild(box);
+}
+
+// ── Live thinking feed (while streaming) ─────────────────────────────────────
+
 let feedEl = null;
+let liveRounds = [];
+let liveCurrentRound = null;
+
 function startThinkingFeed() {
   document.getElementById('welcome')?.remove();
   const m = document.getElementById('messages');
   const typing = document.createElement('div');
-  typing.className = 'msg agent';
-  typing.id = 'typing-indicator';
-  typing.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+  typing.className='msg agent'; typing.id='typing-indicator';
+  typing.innerHTML='<div class="typing"><span></span><span></span><span></span></div>';
   m.appendChild(typing);
   feedEl = document.createElement('div');
-  feedEl.className = 'thinking-feed';
-  feedEl.id = 'thinking-feed';
+  feedEl.className='thinking-feed'; feedEl.id='thinking-feed';
   m.appendChild(feedEl);
+  liveRounds = []; liveCurrentRound = null;
   scrollBottom();
 }
 
 function appendFeed(html) {
   if (!feedEl) return;
   feedEl.innerHTML += html;
+  feedEl.scrollTop = feedEl.scrollHeight;
   scrollBottom();
 }
 
@@ -646,23 +481,148 @@ function endThinkingFeed() {
   feedEl = null;
 }
 
+function handleFeedEvent(evt) {
+  switch (evt.type) {
+    case 'provider':
+      appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}</div>`);
+      break;
+    case 'round':
+      if (liveCurrentRound) liveRounds.push(liveCurrentRound);
+      liveCurrentRound = { round: evt.round, thinking: '', toolCalls: [] };
+      appendFeed(`<div class="tf-round">── Round ${evt.round} ──</div>`);
+      break;
+    case 'thinking':
+      if (liveCurrentRound) liveCurrentRound.thinking = evt.text;
+      appendFeed(`<div class="tf-think">💭 ${escHtml(evt.text)}</div>`);
+      break;
+    case 'tool_call':
+      if (liveCurrentRound) liveCurrentRound.toolCalls.push({ tool: evt.tool, args: evt.args, result: '' });
+      appendFeed(`<div class="tf-tool">🔧 <strong>${escHtml(evt.tool)}</strong> <span style="color:#475569">${escHtml(evt.args)}</span></div>`);
+      break;
+    case 'tool_result':
+      if (liveCurrentRound) { const tc=liveCurrentRound.toolCalls[liveCurrentRound.toolCalls.length-1]; if(tc) tc.result=evt.text; }
+      appendFeed(`<div class="tf-result">${escHtml(evt.text)}</div>`);
+      break;
+  }
+}
+
+// ── Computer mode rendering ───────────────────────────────────────────────────
+
+let computerMsgEl = null;
+let cpuTaskMap = {};
+
+function startComputerMode(userText) {
+  document.getElementById('welcome')?.remove();
+  const m = document.getElementById('messages');
+  const userDiv = document.createElement('div');
+  userDiv.className = 'msg user';
+  const now = new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  userDiv.innerHTML = `<div class="msg-meta">You · ${now}</div><div class="bubble">${escHtml(userText)}</div>`;
+  m.appendChild(userDiv);
+
+  computerMsgEl = document.createElement('div');
+  computerMsgEl.className = 'msg agent computer-msg';
+  computerMsgEl.innerHTML = `
+    <div class="msg-meta">Solis Computer Mode · ${now}</div>
+    <div style="background:#141414;border:1px solid #222;border-radius:12px;border-bottom-left-radius:3px;padding:14px">
+      <div class="cm-phase" id="cm-phase"><div class="cm-phase-dot"></div><span id="cm-phase-text">Initializing…</span></div>
+      <div class="cm-plan" id="cm-plan" style="display:none"></div>
+      <div id="cm-win-actions"></div>
+      <div id="cm-synthesis" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #1e1e1e">
+        <div class="tf-round" style="margin-bottom:4px">── Synthesis ──</div>
+        <div id="cm-reply" style="font-size:0.83rem;line-height:1.6;color:#d4d4d4;white-space:pre-wrap"></div>
+      </div>
+    </div>`;
+  m.appendChild(computerMsgEl);
+  cpuTaskMap = {};
+  scrollBottom();
+}
+
+function handleComputerEvent(evt) {
+  if (!computerMsgEl) return;
+  const phaseText = document.getElementById('cm-phase-text');
+  const phaseDot = document.querySelector('.cm-phase-dot');
+
+  switch (evt.type) {
+    case 'phase':
+      if (phaseText) phaseText.textContent = evt.message || evt.phase;
+      if (phaseDot) {
+        phaseDot.style.background = evt.phase==='synthesizing' ? '#a78bfa' : evt.phase==='done' ? '#22c55e' : '#f59e0b';
+      }
+      if (evt.phase==='synthesizing') document.getElementById('cm-synthesis').style.display='block';
+      break;
+
+    case 'plan': {
+      const planEl = document.getElementById('cm-plan');
+      planEl.style.display='grid';
+      planEl.innerHTML = '';
+      for (const st of (evt.subtasks||[])) {
+        cpuTaskMap[st.id] = { el: null };
+        const card = document.createElement('div');
+        card.className='cm-task'; card.id=`cm-task-${st.id}`;
+        card.innerHTML=`<div class="cm-task-model"><div class="status-dot" id="sd-${st.id}"></div>${escHtml(st.model)}</div><div class="cm-task-text">${escHtml(st.task)}</div><div class="cm-result-preview" id="cr-${st.id}"></div>`;
+        planEl.appendChild(card);
+        cpuTaskMap[st.id] = { card };
+      }
+      if (evt.windowsEnabled) {
+        const planEl2 = document.getElementById('cm-plan');
+        const winCard = document.createElement('div');
+        winCard.className='cm-task';
+        winCard.innerHTML='<div class="cm-task-model"><div class="status-dot" style="background:#22c55e"></div>Windows Desktop</div><div class="cm-task-text">Real desktop control available</div>';
+        planEl2.appendChild(winCard);
+      }
+      break;
+    }
+
+    case 'specialist_start': {
+      const sd = document.getElementById(`sd-${evt.taskId}`);
+      if (sd) sd.className='status-dot running';
+      break;
+    }
+
+    case 'specialist_done': {
+      const sd = document.getElementById(`sd-${evt.taskId}`);
+      const cr = document.getElementById(`cr-${evt.taskId}`);
+      if (sd) sd.className = 'status-dot ' + (evt.error ? 'error' : 'done');
+      if (cr && evt.result) cr.textContent = evt.result.slice(0, 120) + (evt.result.length>120?'…':'');
+      break;
+    }
+
+    case 'windows_action': {
+      const wEl = document.getElementById('cm-win-actions');
+      if (wEl) {
+        const div = document.createElement('div');
+        div.className='cm-win-action';
+        div.innerHTML=`🖥 <strong>${escHtml(evt.action)}</strong> ${escHtml(JSON.stringify(evt.args||{}).slice(0,80))}`;
+        wEl.appendChild(div);
+        if (evt.screenshot) updateDesktopImage(evt.screenshot);
+      }
+      break;
+    }
+
+    case 'reply': {
+      const replyEl = document.getElementById('cm-reply');
+      if (replyEl) replyEl.innerHTML = renderMd(evt.text);
+      if (phaseText) phaseText.textContent = 'Complete';
+      if (phaseDot) { phaseDot.style.background='#22c55e'; phaseDot.style.animation='none'; }
+      break;
+    }
+  }
+  scrollBottom();
+}
+
+// ── Send message ──────────────────────────────────────────────────────────────
+
 async function sendMessage() {
   if (busy) return;
   const input = document.getElementById('input');
   const text = input.value.trim();
   if (!text) return;
+  input.value = ''; input.style.height = '44px';
 
-  input.value = '';
-  input.style.height = '44px';
+  if (currentMode === 'bg') { await submitBackground(text); input.focus(); return; }
+  if (currentMode === 'cpu') { await sendComputerMode(text); input.focus(); return; }
 
-  // Background mode: submit job and return immediately
-  if (bgMode) {
-    await submitBackground(text);
-    input.focus();
-    return;
-  }
-
-  // Streaming mode: normal SSE chat
   busy = true;
   document.getElementById('send-btn').disabled = true;
   setStatus('thinking…');
@@ -671,44 +631,31 @@ async function sendMessage() {
   startThinkingFeed();
 
   try {
-    const res = await fetch('/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const r = await fetch('/chat', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
     });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const reader = res.body.getReader();
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const reader = r.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
 
     while (true) {
-      const { done, value } = await reader.read();
+      const {done, value} = await reader.read();
       if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-
+      buf += dec.decode(value, {stream: true});
+      const lines = buf.split('\n'); buf = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
-        let evt;
-        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
-
-        if (evt.type === 'provider') {
-          const pool = evt.poolSize > 1 ? ` · ${evt.poolSize} keys` : '';
-          appendFeed(`<div class="tf-round" style="color:#555">⚡ ${escHtml(evt.name)} · ${escHtml(evt.model)}${pool}</div>`);
-        } else if (evt.type === 'round') {
-          appendFeed(`<div class="tf-round">── Round ${evt.round} ──</div>`);
-        } else if (evt.type === 'thinking') {
-          appendFeed(`<div class="tf-think">💭 ${escHtml(evt.text)}</div>`);
-        } else if (evt.type === 'tool_call') {
-          appendFeed(`<div class="tf-tool">🔧 <strong>${escHtml(evt.tool)}</strong> <span style="color:#475569">${escHtml(evt.args)}</span></div>`);
-        } else if (evt.type === 'tool_result') {
-          appendFeed(`<div class="tf-result">${escHtml(evt.text)}</div>`);
+        let evt; try { evt=JSON.parse(line.slice(6)); } catch { continue; }
+        if (['round','thinking','tool_call','tool_result','provider'].includes(evt.type)) {
+          handleFeedEvent(evt);
         } else if (evt.type === 'reply') {
+          if (liveCurrentRound) liveRounds.push(liveCurrentRound);
+          const allRounds = [...liveRounds];
           endThinkingFeed();
-          addMessage('agent', evt.text);
+          const msgEl = addMessage('agent', evt.text);
+          attachThinkingToggle(msgEl, allRounds);
           setStatus('ready');
         } else if (evt.type === 'error') {
           endThinkingFeed();
@@ -728,71 +675,260 @@ async function sendMessage() {
   input.focus();
 }
 
-// ── Activity feed ─────────────────────────────────────────────────────────────
+// ── Computer mode send ────────────────────────────────────────────────────────
 
-let lastFeedTs = null;
+async function sendComputerMode(text) {
+  busy = true;
+  document.getElementById('send-btn').disabled = true;
+  setStatus('planning…');
+  startComputerMode(text);
 
-function renderEntry(e) {
-  const div = document.createElement('div');
-  div.className = 'entry';
-  const totalTools = (e.rounds||[]).reduce((s,r)=>s+(r.toolCalls?.length||0),0);
-  const rc = (e.rounds||[]).length;
-  div.innerHTML = `
-    <div class="entry-head" onclick="this.closest('.entry').classList.toggle('open')">
-      <div style="flex:1;min-width:0">
-        <div class="entry-user">@${escHtml(e.username)} · ${new Date(e.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>
-        <div class="entry-msg">${escHtml(e.userMessage)}</div>
-      </div>
-      <div class="entry-meta">
-        <span class="tag rounds">${rc}r</span>
-        ${totalTools?`<span class="tag">${totalTools}t</span>`:''}
-        <span class="tag dur">${fmtDur(e.durationMs)}</span>
-        <span class="chevron">▶</span>
-      </div>
-    </div>
-    <div class="entry-body">
-      ${(e.rounds||[]).map(r=>`
-        <div class="round-block">
-          <div class="round-label">Round ${r.round}</div>
-          ${r.thinking?`<div class="think-box">💭 ${escHtml(r.thinking)}</div>`:''}
-          ${(r.toolCalls||[]).map(tc=>`
-            <div class="tool-row">
-              <span class="tool-name">${escHtml(tc.tool)}</span> <span class="tool-arg">${escHtml(tc.args)}</span>
-              ${tc.result?`<div class="tool-res">${escHtml(tc.result)}</div>`:''}
-            </div>`).join('')}
-        </div>`).join('')}
-      ${e.finalReply?`<div class="reply-box">${escHtml(e.finalReply)}</div>`:''}
-    </div>`;
-  return div;
+  try {
+    const r = await fetch('/computer', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let evt; try { evt=JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.type==='phase') setStatus(evt.phase+'…');
+        if (evt.type==='done') setStatus('ready');
+        handleComputerEvent(evt);
+      }
+    }
+  } catch (err) {
+    if (computerMsgEl) {
+      const ph = document.getElementById('cm-phase-text');
+      if (ph) ph.textContent = 'Error: ' + err.message;
+    }
+    setStatus('ready');
+  }
+
+  computerMsgEl = null; cpuTaskMap = {};
+  busy = false;
+  document.getElementById('send-btn').disabled = false;
 }
 
-async function pollFeed() {
-  const badge = document.getElementById('feed-badge');
-  try {
-    const r = await fetch('/activity');
-    const data = await r.json();
-    const entries = data.entries||[];
-    badge.textContent = '● live'; badge.className = 'badge live';
-    if (!entries.length) return;
-    const newest = entries[0]?.timestamp;
-    if (newest === lastFeedTs) return;
-    lastFeedTs = newest;
-    const feed = document.getElementById('feed');
-    feed.innerHTML = '';
-    for (const e of entries) feed.appendChild(renderEntry(e));
-    feed.querySelector('.entry')?.classList.add('open');
-  } catch {
-    badge.textContent = 'offline'; badge.className = 'badge';
+// ── Background jobs ───────────────────────────────────────────────────────────
+
+function getJobs(){try{return JSON.parse(localStorage.getItem('solis_jobs')||'[]');}catch{return[];}}
+function saveJobs(j){localStorage.setItem('solis_jobs',JSON.stringify(j.slice(0,30)));}
+function upsertJob(job){const jobs=getJobs();const i=jobs.findIndex(j=>j.id===job.id);if(i!==-1)jobs[i]=job;else jobs.unshift(job);saveJobs(jobs);renderJobs();}
+function removeJob(id){saveJobs(getJobs().filter(j=>j.id!==id));renderJobs();}
+
+function renderJobs(){
+  const jobs=getJobs();
+  const badge=document.getElementById('jobs-badge');
+  const running=jobs.filter(j=>j.status==='running').length;
+  badge.textContent=jobs.length+' job'+(jobs.length!==1?'s':'')+(running?` · ${running} running`:'');
+  badge.className='badge'+(running?' live':'');
+  const c=document.getElementById('jobs-list');
+  if(!jobs.length){c.innerHTML='<p class="empty">No background jobs. Toggle ⚡ BG and submit a message.</p>';return;}
+  c.innerHTML=jobs.map(job=>{
+    const rc=(job.rounds||[]).length;
+    const durTag=job.durationMs?`<span class="tag dur">${fmtDur(job.durationMs)}</span>`:'';
+    const rcTag=rc?`<span class="tag rounds">${rc}r</span>`:'';
+    const replyBlock=job.status==='done'&&job.reply?`<div class="job-reply">${escHtml(job.reply.slice(0,200))}${job.reply.length>200?'…':''}</div>`:'';
+    const errBlock=job.status==='error'&&job.error?`<div class="job-error">Error: ${escHtml(job.error)}</div>`:'';
+
+    // Rounds detail (thinking + tools)
+    let roundsHtml='';
+    if(rc>0){
+      const roundsInner=(job.rounds||[]).map(r=>{
+        let h=`<div class="jr-round"><div class="jr-rlabel">Round ${r.round}</div>`;
+        if(r.thinking)h+=`<div class="jr-think">💭 ${escHtml(r.thinking)}</div>`;
+        for(const tc of(r.toolCalls||[])){h+=`<div class="jr-tool">🔧 <strong>${escHtml(tc.tool)}</strong> ${escHtml(tc.args)}</div>`;if(tc.result)h+=`<div class="jr-res">${escHtml(tc.result)}</div>`;}
+        h+='</div>';return h;
+      }).join('');
+      roundsHtml=`<div class="job-rounds" id="jr-${escHtml(job.id)}">${roundsInner}</div>
+      <button class="jr-toggle" onclick="toggleRounds('${escHtml(job.id)}')">▶ ${rc} round${rc!==1?'s':''} of reasoning</button>`;
+    }
+
+    const actions=job.status==='done'
+      ?`<div class="job-actions"><button class="job-load-btn" onclick="loadJobToChat('${escHtml(job.id)}')">Load reply in chat</button><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕</button></div>`
+      :job.status==='error'?`<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`:'';
+
+    return`<div class="job-entry"><div class="job-head"><div class="job-msg">${escHtml(job.message.slice(0,120))}${job.message.length>120?'…':''}</div><div class="job-meta"><span class="tag ${job.status}">${job.status}</span>${rcTag}${durTag}<span class="tag">${fmtTime(job.created)}</span></div></div>${replyBlock}${errBlock}${roundsHtml}${actions}</div>`;
+  }).join('');
+}
+
+function toggleRounds(jobId){const el=document.getElementById(`jr-${jobId}`);if(!el)return;el.classList.toggle('open');}
+function loadJobToChat(id){const j=getJobs().find(j=>j.id===id);if(!j)return;addMessage('user',j.message);if(j.reply)addMessage('agent',j.reply);}
+
+async function pollJobs(){
+  const running=getJobs().filter(j=>j.status==='running');
+  if(!running.length)return;
+  await Promise.all(running.map(async job=>{
+    try{
+      const r=await fetch('/job?id='+encodeURIComponent(job.id));
+      if(!r.ok)return;
+      const data=await r.json();
+      upsertJob({...job,...data});
+      if(job.status==='running'&&data.status==='done')showNotification('Job done: '+job.message.slice(0,50));
+      else if(job.status==='running'&&data.status==='error')showNotification('Job error: '+(data.error||'?'),true);
+    }catch{}
+  }));
+}
+
+async function submitBackground(text){
+  if(typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission().catch(()=>{});
+  const tmp='tmp-'+Date.now();
+  upsertJob({id:tmp,status:'running',message:text,created:Date.now(),rounds:[],reply:null});
+  try{
+    const r=await fetch('/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,sessionId:getSessionId(),...getApiConfig()})});
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.error||'Submit failed');
+    removeJob(tmp);
+    upsertJob({id:data.jobId,status:'running',message:text,created:Date.now(),rounds:[],reply:null});
+    showNotification('Job queued — safe to close the page now.');
+  }catch(err){
+    upsertJob({id:tmp,status:'error',message:text,error:err.message,created:Date.now(),rounds:[],reply:null});
   }
 }
 
-pollFeed();
-setInterval(pollFeed, 3000);
+function showNotification(msg,isErr=false){
+  const b=document.createElement('div');b.className='notif-banner'+(isErr?' err':'');
+  b.textContent=(isErr?'✕ ':'✓ ')+msg;document.body.appendChild(b);setTimeout(()=>b.remove(),6000);
+  if(!isErr&&typeof Notification!=='undefined'&&Notification.permission==='granted'){try{new Notification('Solis',{body:msg});}catch{}}
+}
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-
+setInterval(pollJobs,5000);
 renderJobs();
 pollJobs();
+
+// ── Windows Desktop Viewer ────────────────────────────────────────────────────
+
+let desktopOpen = false;
+let desktopPolling = null;
+let desktopConnected = false;
+let desktopOrigW = 1920, desktopOrigH = 1080;
+
+function toggleDesktop(){
+  desktopOpen=!desktopOpen;
+  document.getElementById('desktop-panel').style.display=desktopOpen?'block':'none';
+  document.getElementById('desktop-chevron').textContent=desktopOpen?'▲ collapse':'▼ expand';
+  if(desktopOpen&&!desktopPolling)startDesktopPolling();
+  else if(!desktopOpen&&desktopPolling){clearInterval(desktopPolling);desktopPolling=null;}
+}
+
+function updateDesktopImage(b64){
+  const img=document.getElementById('desktop-img');
+  const nc=document.getElementById('desktop-not-configured');
+  const abar=document.getElementById('desktop-action-bar');
+  img.src='data:image/png;base64,'+b64;
+  img.style.display='block'; nc.style.display='none'; abar.style.display='flex';
+  desktopConnected=true;
+}
+
+async function takeScreenshot(){
+  document.getElementById('dab-status').textContent='refreshing…';
+  try{
+    const r=await fetch('/desktop?action=screenshot');
+    const d=await r.json();
+    if(d.screenshot){
+      updateDesktopImage(d.screenshot);
+      desktopOrigW=d.orig_width||d.width||1920; desktopOrigH=d.orig_height||d.height||1080;
+      document.getElementById('dab-status').textContent=`${d.width}×${d.height} (actual ${desktopOrigW}×${desktopOrigH})`;
+    } else if(d.error){
+      document.getElementById('dab-status').textContent='Error: '+d.error;
+    }
+  }catch(e){document.getElementById('dab-status').textContent='Offline: '+e.message;}
+}
+
+function startDesktopPolling(){
+  takeScreenshot();
+  desktopPolling=setInterval(takeScreenshot,4000);
+}
+
+async function desktopClick(e){
+  if(!desktopConnected||!document.getElementById('click-thru').checked)return;
+  const img=e.currentTarget;
+  const rect=img.getBoundingClientRect();
+  const scaleX=desktopOrigW/img.offsetWidth;
+  const scaleY=desktopOrigH/img.offsetHeight;
+  const x=Math.round((e.clientX-rect.left)*scaleX);
+  const y=Math.round((e.clientY-rect.top)*scaleY);
+
+  // Show click indicator
+  const ind=document.createElement('div');
+  ind.className='click-indicator';
+  ind.style.left=(e.clientX-rect.left)+'px'; ind.style.top=(e.clientY-rect.top)+'px';
+  document.getElementById('desktop-screen').appendChild(ind);
+  setTimeout(()=>ind.remove(),700);
+
+  document.getElementById('dab-status').textContent=`clicking (${x},${y})…`;
+  try{
+    await fetch('/desktop?action=click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x,y,button:e.button===2?'right':'left'})});
+    setTimeout(takeScreenshot,400);
+  }catch(e){document.getElementById('dab-status').textContent='Click error: '+e.message;}
+}
+
+async function sendWinKey(key){
+  try{await fetch('/desktop?action=key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});setTimeout(takeScreenshot,400);}catch{}
+}
+
+async function sendWinHotkey(keys){
+  try{await fetch('/desktop?action=hotkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys})});setTimeout(takeScreenshot,600);}catch{}
+}
+
+// Check if Windows bridge is configured on load
+(async function checkWindowsBridge(){
+  try{
+    const r=await fetch('/desktop?action=info');
+    const d=await r.json();
+    const pill=document.getElementById('desktop-pill');
+    const stat=document.getElementById('win-status');
+    if(d.os){
+      pill.textContent='● connected'; pill.className='badge live';
+      stat.textContent='✓ '+d.os+' '+d.screen_width+'×'+d.screen_height; stat.className='value ok';
+    } else {
+      pill.textContent='not connected'; stat.textContent='not connected — see Desktop card';
+    }
+  }catch{
+    document.getElementById('desktop-pill').textContent='not connected';
+    document.getElementById('win-status').textContent='not configured';
+  }
+})();
+
+// ── Telegram Activity Feed ────────────────────────────────────────────────────
+
+let lastFeedTs=null;
+function renderEntry(e){
+  const div=document.createElement('div');div.className='entry';
+  const totalTools=(e.rounds||[]).reduce((s,r)=>s+(r.toolCalls?.length||0),0);
+  const rc=(e.rounds||[]).length;
+  div.innerHTML=`<div class="entry-head" onclick="this.closest('.entry').classList.toggle('open')">
+    <div style="flex:1;min-width:0"><div class="entry-user">@${escHtml(e.username)} · ${new Date(e.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div><div class="entry-msg">${escHtml(e.userMessage)}</div></div>
+    <div class="entry-meta"><span class="tag rounds">${rc}r</span>${totalTools?`<span class="tag">${totalTools}t</span>`:''}<span class="tag dur">${fmtDur(e.durationMs)}</span><span class="chevron">▶</span></div></div>
+  <div class="entry-body">
+    ${(e.rounds||[]).map(r=>`<div class="round-block"><div class="round-label">Round ${r.round}</div>${r.thinking?`<div class="think-box">💭 ${escHtml(r.thinking)}</div>`:''
+    }${(r.toolCalls||[]).map(tc=>`<div class="tool-row"><span class="tool-name">${escHtml(tc.tool)}</span> <span class="tool-arg">${escHtml(tc.args)}</span>${tc.result?`<div class="tool-res">${escHtml(tc.result)}</div>`:''}</div>`).join('')}</div>`).join('')}
+    ${e.finalReply?`<div class="reply-box">${escHtml(e.finalReply)}</div>`:''}
+  </div>`;
+  return div;
+}
+async function pollFeed(){
+  const badge=document.getElementById('feed-badge');
+  try{const r=await fetch('/activity');const data=await r.json();const entries=data.entries||[];
+    badge.textContent='● live';badge.className='badge live';
+    if(!entries.length)return;
+    const newest=entries[0]?.timestamp;if(newest===lastFeedTs)return;lastFeedTs=newest;
+    const feed=document.getElementById('feed');feed.innerHTML='';
+    for(const e of entries)feed.appendChild(renderEntry(e));
+    feed.querySelector('.entry')?.classList.add('open');
+  }catch{badge.textContent='offline';badge.className='badge';}
+}
+pollFeed();setInterval(pollFeed,3000);
 </script>
 </body>
 </html>
