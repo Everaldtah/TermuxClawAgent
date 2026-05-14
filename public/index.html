@@ -136,6 +136,17 @@
     .desktop-not-configured code{color:#444;background:#141414;padding:2px 6px;border-radius:3px;font-size:0.78rem}
     .dab-btn{background:#141414;border:1px solid #222;border-radius:6px;padding:3px 8px;color:#555;font-family:inherit;font-size:0.7rem;cursor:pointer}
     .dab-btn:hover{color:#d4d4d4;border-color:#333}
+    /* ── Linux Shell viewer ── */
+    .shell-wrap{padding:0;border-top:1px solid #181818}
+    .shell-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 14px;background:#0a0a0a;border-bottom:1px solid #161616;color:#475569;font-size:0.7rem}
+    .shell-feed{background:#000;padding:10px 12px;max-height:380px;overflow-y:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:0.73rem;line-height:1.5}
+    .shell-empty{color:#2a2a2a;text-align:center;padding:32px 16px;font-style:italic;font-size:0.78rem}
+    .shell-row{margin-bottom:10px;border-bottom:1px solid #0a0a0a;padding-bottom:6px}
+    .shell-row.pending .shell-cmd::after{content:" …";color:#f59e0b;animation:pulse 1s infinite}
+    .shell-cmd{color:#86efac;white-space:pre-wrap;word-break:break-all}
+    .shell-cmd .shell-prompt{color:#475569;margin-right:6px;user-select:none}
+    .shell-out{margin-top:4px;color:#cbd5e1;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;padding-left:12px;border-left:2px solid #1e293b}
+    .shell-out.err{color:#fca5a5;border-left-color:#7f1d1d}
     .click-indicator{position:absolute;width:20px;height:20px;border-radius:50%;border:2px solid #22c55e;pointer-events:none;transform:translate(-50%,-50%);animation:clickFade .6s ease-out forwards}
     @keyframes clickFade{0%{opacity:1;transform:translate(-50%,-50%) scale(0.5)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.8)}}
 
@@ -211,11 +222,11 @@
   <div class="card">
     <div class="card-body">
       <div class="status-header"><div class="dot"></div><h1>Solis — TermuxClawAgent</h1></div>
-      <p class="sub">Cloud agent · Multi-model Computer Mode · Windows Desktop Control · Background jobs</p>
+      <p class="sub">Cloud agent · Multi-model Computer Mode · Linux shell · Background jobs · Persistent memory</p>
       <div class="row"><span class="label">Status</span><span class="value ok">● Online</span></div>
       <div class="row"><span class="label">Primary Model</span><span class="value">moonshotai/kimi-k2.6</span></div>
       <div class="row"><span class="label">Computer Mode</span><span class="value ok">✓ DeepSeek · GLM · Qwen · MiniMax</span></div>
-      <div class="row"><span class="label">Windows Desktop</span><span class="value" id="win-status">checking…</span></div>
+      <div class="row"><span class="label">Linux Shell</span><span class="value ok" id="shell-status">✓ Connected (Vercel Amazon Linux)</span></div>
       <div class="row"><span class="label">Background Jobs</span><span class="value ok">✓ Runs after page close</span></div>
       <div class="row"><span class="label">Telegram</span><span class="value"><a href="https://t.me/SolisTermuxclaw_bot" target="_blank">@SolisTermuxclaw_bot →</a></span></div>
     </div>
@@ -294,32 +305,20 @@
     </div>
   </div>
 
-  <!-- Windows Desktop Viewer -->
-  <div class="card" id="desktop-card">
-    <div class="section-head" style="cursor:pointer" onclick="toggleDesktop()">
-      <span class="section-title">🖥 Windows Desktop <span id="desktop-pill" class="badge" style="margin-left:6px">checking…</span></span>
-      <span class="badge" id="desktop-chevron">▼ expand</span>
+  <!-- Linux Shell Console -->
+  <div class="card" id="shell-card">
+    <div class="section-head" style="cursor:pointer" onclick="toggleShell()">
+      <span class="section-title">🐧 Linux Shell <span id="shell-pill" class="badge ok" style="margin-left:6px">connected</span></span>
+      <span class="badge" id="shell-chevron">▼ expand</span>
     </div>
-    <div id="desktop-panel" style="display:none">
-      <div class="desktop-wrap">
-        <div class="desktop-screen" id="desktop-screen">
-          <div class="desktop-not-configured" id="desktop-not-configured">
-            <p style="color:#444;margin-bottom:12px">Windows desktop not connected.</p>
-            <p>Run the bridge script on your Windows machine:</p>
-            <p style="margin:8px 0"><code>pip install flask pyautogui Pillow</code></p>
-            <p><code>python scripts/windows-bridge.py --token your-token</code></p>
-            <p style="margin-top:12px;color:#333">Then set <code>WINDOWS_BRIDGE_URL</code> and <code>WINDOWS_BRIDGE_TOKEN</code> in Vercel → Redeploy.</p>
-            <p style="margin-top:8px;color:#2a5a2a;font-size:0.75rem">Or spin up a full Windows 10 VM: <code>docker compose -f scripts/docker-compose-windows.yml up -d</code></p>
-          </div>
-          <img id="desktop-img" src="" alt="" style="display:none;max-width:100%" onclick="desktopClick(event)" />
+    <div id="shell-panel" style="display:none">
+      <div class="shell-wrap">
+        <div class="shell-meta">
+          <span>Vercel Amazon Linux · /tmp writable · bash, python3, node, curl, wget, git, jq, openssl</span>
+          <button class="dab-btn" onclick="clearShellFeed()">clear</button>
         </div>
-        <div class="desktop-action-bar" id="desktop-action-bar" style="display:none">
-          <span class="dab-status" id="dab-status">ready</span>
-          <button class="dab-btn" onclick="takeScreenshot()">📷 refresh</button>
-          <button class="dab-btn" onclick="sendWinKey('win')">⊞ Win</button>
-          <button class="dab-btn" onclick="sendWinHotkey(['ctrl','alt','delete'])">Ctrl+Alt+Del</button>
-          <button class="dab-btn" onclick="sendWinKey('escape')">Esc</button>
-          <label style="font-size:0.7rem;color:#444">Click-thru: <input type="checkbox" id="click-thru" checked style="cursor:pointer"/></label>
+        <div class="shell-feed" id="shell-feed">
+          <div class="shell-empty">No shell activity yet. Send a prompt — every <code>shell_exec</code> the agent runs will stream here with stdout/stderr.</div>
         </div>
       </div>
     </div>
@@ -514,11 +513,21 @@ function handleFeedEvent(evt) {
       appendFeed(`<div class="tf-think">💭 ${escHtml(evt.text)}</div>`);
       break;
     case 'tool_call':
-      if (liveCurrentRound) liveCurrentRound.toolCalls.push({ tool: evt.tool, args: evt.args, result: '' });
+      if (liveCurrentRound) {
+        const slot = { tool: evt.tool, args: evt.args, result: '' };
+        if (evt.tool === 'shell_exec') slot._shellKey = shellOnToolCall(evt.args);
+        liveCurrentRound.toolCalls.push(slot);
+      }
       appendFeed(`<div class="tf-tool">🔧 <strong>${escHtml(evt.tool)}</strong> <span style="color:#475569">${escHtml(evt.args)}</span></div>`);
       break;
     case 'tool_result':
-      if (liveCurrentRound) { const tc=liveCurrentRound.toolCalls[liveCurrentRound.toolCalls.length-1]; if(tc) tc.result=evt.text; }
+      if (liveCurrentRound) {
+        const tc = liveCurrentRound.toolCalls[liveCurrentRound.toolCalls.length-1];
+        if (tc) {
+          tc.result = evt.text;
+          if (tc.tool === 'shell_exec' && tc._shellKey) shellOnToolResult(tc._shellKey, evt.text);
+        }
+      }
       appendFeed(`<div class="tf-result">${escHtml(evt.text)}</div>`);
       break;
   }
@@ -582,12 +591,14 @@ function handleComputerEvent(evt) {
         planEl.appendChild(card);
         cpuTaskMap[st.id] = { card };
       }
-      if (evt.windowsEnabled) {
+      // Always show a Linux Shell capability card so the user knows the
+      // coordinator has shell access on the Vercel Amazon Linux runtime.
+      {
         const planEl2 = document.getElementById('cm-plan');
-        const winCard = document.createElement('div');
-        winCard.className='cm-task';
-        winCard.innerHTML='<div class="cm-task-model"><div class="status-dot" style="background:#22c55e"></div>Windows Desktop</div><div class="cm-task-text">Real desktop control available</div>';
-        planEl2.appendChild(winCard);
+        const shellCard = document.createElement('div');
+        shellCard.className='cm-task';
+        shellCard.innerHTML='<div class="cm-task-model"><div class="status-dot" style="background:#22c55e"></div>🐧 Linux Shell</div><div class="cm-task-text">shell_exec available · bash, python3, node, curl, jq…</div>';
+        planEl2.appendChild(shellCard);
       }
       break;
     }
@@ -607,13 +618,15 @@ function handleComputerEvent(evt) {
     }
 
     case 'windows_action': {
+      // Windows desktop bridge is no longer surfaced in the UI — Linux shell
+      // is the primary execution surface. Keep a minimal inline render in case
+      // an external bridge is still configured server-side.
       const wEl = document.getElementById('cm-win-actions');
       if (wEl) {
         const div = document.createElement('div');
         div.className='cm-win-action';
-        div.innerHTML=`🖥 <strong>${escHtml(evt.action)}</strong> ${escHtml(JSON.stringify(evt.args||{}).slice(0,80))}`;
+        div.innerHTML=`🪟 <strong>${escHtml(evt.action)}</strong> ${escHtml(JSON.stringify(evt.args||{}).slice(0,80))}`;
         wEl.appendChild(div);
-        if (evt.screenshot) updateDesktopImage(evt.screenshot);
       }
       break;
     }
@@ -622,18 +635,29 @@ function handleComputerEvent(evt) {
       const wEl = document.getElementById('cm-win-actions');
       if (!wEl) break;
       const isLinux = evt.kind === 'linux';
-      const icon = isLinux ? '🐧' : (evt.kind === 'windows' ? '🪟' : '🔧');
-      const id = `cm-act-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      // If this is the "pending" marker (no result yet), render with a spinner;
-      // when the matching result arrives, replace the last pending row.
+      const icon = isLinux ? '🐧' : (evt.kind === 'windows' ? '🪟' : (evt.kind === 'memory' ? '🧠' : '🔧'));
+
+      // Mirror Linux shell_exec actions into the dedicated Linux Shell panel too.
+      if (isLinux && evt.action === 'shell_exec') {
+        if (evt.pending) {
+          evt._cmShellKey = shellOnToolCall(evt.args || '');
+        } else {
+          // For non-pending events, try to find the matching pending row in the
+          // inline cm-tool-action list and reuse its key tag if any.
+          const pendings = wEl.querySelectorAll('.cm-tool-action.pending[data-action="shell_exec"]');
+          const last = pendings[pendings.length - 1];
+          shellOnToolResult(last?.dataset.shellKey || null, evt.result || '');
+        }
+      }
+
       if (evt.pending) {
         const div = document.createElement('div');
         div.className = 'cm-tool-action pending';
         div.dataset.action = evt.action;
+        if (evt._cmShellKey) div.dataset.shellKey = evt._cmShellKey;
         div.innerHTML = `<div class="cm-ta-head">${icon} <strong>${escHtml(evt.action)}</strong> <span class="cm-ta-args">${escHtml(evt.args||'')}</span> <span class="cm-ta-spin">…</span></div>`;
         wEl.appendChild(div);
       } else {
-        // Find the latest pending row for this action and fill it; if none, append a new one.
         const pendings = wEl.querySelectorAll(`.cm-tool-action.pending[data-action="${evt.action}"]`);
         const target = pendings.length ? pendings[pendings.length - 1] : (() => {
           const d = document.createElement('div');
@@ -886,99 +910,99 @@ setInterval(pollJobs,5000);
 renderJobs();
 pollJobs();
 
-// ── Windows Desktop Viewer ────────────────────────────────────────────────────
+// ── Linux Shell Console ──────────────────────────────────────────────────────
+//
+// Mirrors every shell_exec the agent runs into a live terminal-style feed.
+// Sources:
+//   1) inline SSE during a chat/computer run (handled in handleFeedEvent /
+//      handleComputerEvent below — they call pushShellRow).
+//   2) the persisted job record (computer-mode jobs include toolActions with
+//      kind="linux" + result), polled and rehydrated below so a refresh
+//      reconstructs the feed.
 
-let desktopOpen = false;
-let desktopPolling = null;
-let desktopConnected = false;
-let desktopOrigW = 1920, desktopOrigH = 1080;
+let shellOpen = false;
+const shellSeen = new Set(); // de-dupe key: cmd|at
 
-function toggleDesktop(){
-  desktopOpen=!desktopOpen;
-  document.getElementById('desktop-panel').style.display=desktopOpen?'block':'none';
-  document.getElementById('desktop-chevron').textContent=desktopOpen?'▲ collapse':'▼ expand';
-  if(desktopOpen&&!desktopPolling)startDesktopPolling();
-  else if(!desktopOpen&&desktopPolling){clearInterval(desktopPolling);desktopPolling=null;}
+function toggleShell(){
+  shellOpen = !shellOpen;
+  document.getElementById('shell-panel').style.display = shellOpen ? 'block' : 'none';
+  document.getElementById('shell-chevron').textContent = shellOpen ? '▲ collapse' : '▼ expand';
 }
 
-function updateDesktopImage(b64){
-  const img=document.getElementById('desktop-img');
-  const nc=document.getElementById('desktop-not-configured');
-  const abar=document.getElementById('desktop-action-bar');
-  img.src='data:image/png;base64,'+b64;
-  img.style.display='block'; nc.style.display='none'; abar.style.display='flex';
-  desktopConnected=true;
+function clearShellFeed(){
+  shellSeen.clear();
+  const feed = document.getElementById('shell-feed');
+  feed.innerHTML = '<div class="shell-empty">Cleared.</div>';
 }
 
-async function takeScreenshot(){
-  document.getElementById('dab-status').textContent='refreshing…';
-  try{
-    const r=await fetch('/desktop?action=screenshot');
-    const d=await r.json();
-    if(d.screenshot){
-      updateDesktopImage(d.screenshot);
-      desktopOrigW=d.orig_width||d.width||1920; desktopOrigH=d.orig_height||d.height||1080;
-      document.getElementById('dab-status').textContent=`${d.width}×${d.height} (actual ${desktopOrigW}×${desktopOrigH})`;
-    } else if(d.error){
-      document.getElementById('dab-status').textContent='Error: '+d.error;
-    }
-  }catch(e){document.getElementById('dab-status').textContent='Offline: '+e.message;}
-}
+/** Stream a single shell action into the panel. `pending=true` adds a spinner row that
+ *  is replaced when the matching result arrives. */
+function pushShellRow({ cmd, result, pending = false, isError = false, key = null }) {
+  const feed = document.getElementById('shell-feed');
+  const emptyEl = feed.querySelector('.shell-empty');
+  if (emptyEl) emptyEl.remove();
 
-function startDesktopPolling(){
-  takeScreenshot();
-  desktopPolling=setInterval(takeScreenshot,4000);
-}
-
-async function desktopClick(e){
-  if(!desktopConnected||!document.getElementById('click-thru').checked)return;
-  const img=e.currentTarget;
-  const rect=img.getBoundingClientRect();
-  const scaleX=desktopOrigW/img.offsetWidth;
-  const scaleY=desktopOrigH/img.offsetHeight;
-  const x=Math.round((e.clientX-rect.left)*scaleX);
-  const y=Math.round((e.clientY-rect.top)*scaleY);
-
-  // Show click indicator
-  const ind=document.createElement('div');
-  ind.className='click-indicator';
-  ind.style.left=(e.clientX-rect.left)+'px'; ind.style.top=(e.clientY-rect.top)+'px';
-  document.getElementById('desktop-screen').appendChild(ind);
-  setTimeout(()=>ind.remove(),700);
-
-  document.getElementById('dab-status').textContent=`clicking (${x},${y})…`;
-  try{
-    await fetch('/desktop?action=click',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x,y,button:e.button===2?'right':'left'})});
-    setTimeout(takeScreenshot,400);
-  }catch(e){document.getElementById('dab-status').textContent='Click error: '+e.message;}
-}
-
-async function sendWinKey(key){
-  try{await fetch('/desktop?action=key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});setTimeout(takeScreenshot,400);}catch{}
-}
-
-async function sendWinHotkey(keys){
-  try{await fetch('/desktop?action=hotkey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys})});setTimeout(takeScreenshot,600);}catch{}
-}
-
-// Check if Windows bridge is configured on load
-(async function checkWindowsBridge(){
-  try{
-    const r=await fetch('/desktop?action=info');
-    const d=await r.json();
-    const pill=document.getElementById('desktop-pill');
-    const stat=document.getElementById('win-status');
-    if(d.os){
-      pill.textContent='● connected'; pill.className='badge live';
-      stat.textContent='✓ '+d.os+' '+d.screen_width+'×'+d.screen_height; stat.className='value ok';
-    } else {
-      pill.textContent='not connected'; stat.textContent='not connected — see Desktop card';
-    }
-  }catch{
-    document.getElementById('desktop-pill').textContent='not connected';
-    document.getElementById('win-status').textContent='not configured';
+  if (pending) {
+    const row = document.createElement('div');
+    row.className = 'shell-row pending';
+    if (key) row.dataset.key = key;
+    row.innerHTML = `<div class="shell-cmd"><span class="shell-prompt">$</span>${escHtml(cmd || '')}</div>`;
+    feed.appendChild(row);
+    feed.scrollTop = feed.scrollHeight;
+    return row;
   }
-})();
+
+  // Replace the most recent pending row with matching key, or append fresh.
+  let target = key ? feed.querySelector(`.shell-row.pending[data-key="${CSS.escape(key)}"]`) : null;
+  if (!target) {
+    const pendings = feed.querySelectorAll('.shell-row.pending');
+    target = pendings[pendings.length - 1] || null;
+  }
+  if (!target) {
+    target = document.createElement('div');
+    target.className = 'shell-row';
+    target.innerHTML = `<div class="shell-cmd"><span class="shell-prompt">$</span>${escHtml(cmd || '')}</div>`;
+    feed.appendChild(target);
+  }
+  target.classList.remove('pending');
+  const out = document.createElement('div');
+  out.className = 'shell-out' + (isError ? ' err' : '');
+  out.textContent = (result || '').slice(0, 6000);
+  target.appendChild(out);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+/** Called from the chat / computer SSE handlers for shell tool calls. */
+function shellOnToolCall(cmd) {
+  const key = 'live:' + Date.now() + ':' + Math.random().toString(36).slice(2,7);
+  pushShellRow({ cmd, pending: true, key });
+  return key;
+}
+function shellOnToolResult(key, result, isError = false) {
+  pushShellRow({ result, isError, key });
+}
+
+/** Rehydrate the panel from job toolActions on load + on poll. De-duped by (action,at). */
+function shellSyncFromJobs() {
+  try {
+    const jobs = getJobs();
+    for (const job of jobs) {
+      const actions = job.toolActions || [];
+      for (const ta of actions) {
+        if (ta.kind !== 'linux' || !ta.result) continue;
+        const k = `${ta.action}|${ta.args}|${ta.at}`;
+        if (shellSeen.has(k)) continue;
+        shellSeen.add(k);
+        const cmd = ta.args || ta.action;
+        pushShellRow({ cmd, result: ta.result, isError: /error|Error/.test(ta.result) });
+      }
+    }
+  } catch {}
+}
+
+// Sync on load + every 5s alongside job polling
+shellSyncFromJobs();
+setInterval(shellSyncFromJobs, 5000);
 
 // ── Telegram Activity Feed ────────────────────────────────────────────────────
 
