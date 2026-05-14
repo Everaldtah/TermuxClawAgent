@@ -16,7 +16,7 @@ import { join, dirname, relative } from "node:path";
 // ── Config (read from env, set before importing) ──────────────────────────────
 
 export const GH_TOKEN    = process.env.GITHUB_TOKEN  ?? "";
-export const GH_REPO     = process.env.GITHUB_STORAGE_REPO ?? "Everaldtah/termuxclawagent-files";
+export const GH_REPO     = process.env.GITHUB_STORAGE_REPO ?? "Everaldtah/solis-agent-files";
 export const GH_BRANCH   = process.env.GITHUB_STORAGE_BRANCH ?? "main";
 const API_BASE           = `https://api.github.com/repos/${GH_REPO}/contents`;
 

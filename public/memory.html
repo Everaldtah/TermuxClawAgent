@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solis · Persistent Memory</title>
+<style>
+  :root { color-scheme: dark; }
+  *,*::before,*::after { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0a0a0a; color: #e4e4e7; min-height: 100vh;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid #1f1f1f; background: #0e0e0e;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 0.95rem; font-weight: 600; margin: 0; color: #fafafa; letter-spacing: 0.02em; }
+  header .crumb { color: #71717a; font-size: 0.78rem; }
+  header a { color: #93c5fd; text-decoration: none; font-size: 0.78rem; }
+  header a:hover { text-decoration: underline; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: calc(100vh - 56px); }
+  .sidebar {
+    border-right: 1px solid #1f1f1f; padding: 12px 10px; overflow-y: auto;
+    background: #0c0c0c;
+  }
+  .group-title {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: #71717a; margin: 10px 4px 4px; font-weight: 600;
+  }
+  .file-btn {
+    width: 100%; text-align: left; padding: 7px 10px; border: 0;
+    background: transparent; color: #cbd5e1; border-radius: 6px; font: inherit;
+    cursor: pointer; margin-bottom: 2px; word-break: break-all; font-size: 0.78rem;
+  }
+  .file-btn:hover { background: #161616; color: #f5f5f5; }
+  .file-btn.active { background: #1e293b; color: #fafafa; }
+  main { padding: 20px 24px; overflow-y: auto; }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .toolbar input[type="search"] {
+    flex: 1; min-width: 200px; padding: 9px 12px; border-radius: 7px;
+    border: 1px solid #27272a; background: #0e0e0e; color: #fafafa; font: inherit;
+  }
+  .toolbar button {
+    padding: 9px 14px; border-radius: 7px; border: 0; background: #2563eb;
+    color: #fff; font: inherit; font-weight: 500; cursor: pointer;
+  }
+  .toolbar button:hover { background: #1d4ed8; }
+  .toolbar button.secondary { background: #1e293b; color: #cbd5e1; }
+  .toolbar button.secondary:hover { background: #334155; }
+  .save-row { display: flex; gap: 8px; margin: 10px 0 16px; }
+  .save-row input { flex: 1; padding: 9px 12px; border: 1px solid #27272a; background:#0e0e0e; color:#fafafa; border-radius:7px; font:inherit; }
+  .save-row button { padding: 9px 14px; border-radius: 7px; border: 0; background: #16a34a; color: #fff; font: inherit; cursor: pointer; }
+  .save-row button:hover { background: #15803d; }
+  .empty { color: #52525b; padding: 18px 0; font-style: italic; font-size: 0.83rem; }
+  .file-view {
+    background: #0c0c0c; border: 1px solid #1f1f1f; border-radius: 8px;
+    padding: 16px 18px; min-height: 50vh;
+  }
+  .file-view h2 { font-size: 0.82rem; font-family: ui-monospace, Menlo, monospace; color: #93c5fd; margin: 0 0 10px; word-break: break-all; }
+  .file-view pre {
+    font: 0.78rem/1.55 ui-monospace, Menlo, monospace;
+    white-space: pre-wrap; word-wrap: break-word; color: #d4d4d8;
+    margin: 0;
+  }
+  .recall-hit {
+    background: #0e0e0e; border: 1px solid #1f1f1f; border-radius: 7px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .recall-hit .path { font-family: ui-monospace, Menlo, monospace; color: #93c5fd; font-size: 0.75rem; }
+  .recall-hit .score { float: right; color: #71717a; font-size: 0.7rem; }
+  .recall-hit .snippet { font-size: 0.82rem; color: #d4d4d8; margin-top: 6px; }
+  .notice { background: #1e293b; border-radius: 6px; padding: 8px 11px; color: #cbd5e1; font-size: 0.78rem; margin-bottom: 12px; }
+  .notice.ok  { background: #052e16; color: #86efac; }
+  .notice.err { background: #2a0d0d; color: #fca5a5; }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; height: auto; }
+    .sidebar { max-height: 35vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Solis · Persistent Memory</h1>
+  <span class="crumb">solis-agent-files / memory</span>
+  <a href="/">← back to chat</a>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div id="file-tree"><div class="empty">Loading…</div></div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Recall: search facts, notes, vault…" />
+      <button id="recall-btn">Search</button>
+      <button id="reload-btn" class="secondary">Reload tree</button>
+    </div>
+
+    <div class="save-row">
+      <input id="fact-input" placeholder="Save a durable fact (e.g. 'User prefers concise replies')" />
+      <button id="save-btn">Save fact</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="view">
+      <div class="file-view"><div class="empty">Pick a file on the left, or run a search.</div></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setStatus(msg, kind = "") {
+  $("status").innerHTML = msg ? `<div class="notice ${kind}">${msg}</div>` : "";
+  if (msg) setTimeout(() => $("status").innerHTML = "", 4000);
+}
+
+function escHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function loadTree() {
+  $("file-tree").innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const r = await fetch("/memory?op=list");
+    const data = await r.json();
+    const groups = [
+      { title: "Facts",     entries: data["memory/facts"]     || [] },
+      { title: "Summaries", entries: data["memory/summaries"] || [] },
+      { title: "Turn logs", entries: data["memory/turns"]     || [] },
+    ];
+    let html = "";
+    let total = 0;
+    for (const g of groups) {
+      html += `<div class="group-title">${g.title}</div>`;
+      if (!g.entries.length) html += `<div class="empty" style="font-size:0.75rem;padding:4px 8px">empty</div>`;
+      for (const e of g.entries) {
+        if (e.type !== "file") continue;
+        total++;
+        html += `<button class="file-btn" data-path="${escHtml(e.path)}">${escHtml(e.name)}</button>`;
+      }
+    }
+    if (!total) html += `<div class="empty">No memory stored yet. Chat with the agent or save a fact above to populate this.</div>`;
+    $("file-tree").innerHTML = html;
+    for (const btn of $("file-tree").querySelectorAll(".file-btn")) {
+      btn.addEventListener("click", () => openFile(btn.dataset.path, btn));
+    }
+  } catch (err) {
+    $("file-tree").innerHTML = `<div class="empty">Failed to load: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function openFile(path, btn) {
+  for (const b of $("file-tree").querySelectorAll(".file-btn")) b.classList.remove("active");
+  if (btn) btn.classList.add("active");
+  $("view").innerHTML = `<div class="file-view"><div class="empty">Loading ${escHtml(path)}…</div></div>`;
+  try {
+    const r = await fetch("/memory?op=read&path=" + encodeURIComponent(path));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    $("view").innerHTML = `<div class="file-view"><h2>${escHtml(data.path)}</h2><pre>${escHtml(data.content)}</pre></div>`;
+  } catch (err) {
+    $("view").innerHTML = `<div class="file-view"><div class="notice err">Failed: ${escHtml(err.message)}</div></div>`;
+  }
+}
+
+async function runRecall() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("view").innerHTML = `<div class="file-view"><div class="empty">Searching for "${escHtml(q)}"…</div></div>`;
+  try {
+    const r = await fetch("/memory?op=recall&q=" + encodeURIComponent(q) + "&k=10");
+    const data = await r.json();
+    const hits = data.hits || [];
+    if (!hits.length) {
+      $("view").innerHTML = `<div class="file-view"><div class="empty">No matches for "${escHtml(q)}".</div></div>`;
+      return;
+    }
+    const html = hits.map(h => `
+      <div class="recall-hit">
+        <span class="score">score ${escHtml(h.score)} · ${escHtml(h.kind)}</span>
+        <button class="path" style="background:none;border:0;padding:0;cursor:pointer;font:inherit" data-path="${escHtml(h.path)}">${escHtml(h.path)}</button>
+        <div class="snippet">${escHtml(h.snippet)}</div>
+      </div>`).join("");
+    $("view").innerHTML = `<div class="file-view"><h2>Search results for "${escHtml(q)}" (${hits.length})</h2>${html}</div>`;
+    for (const b of $("view").querySelectorAll(".path")) {
+      b.addEventListener("click", () => openFile(b.dataset.path));
+    }
+  } catch (err) {
+    $("view").innerHTML = `<div class="file-view"><div class="notice err">Recall failed: ${escHtml(err.message)}</div></div>`;
+  }
+}
+
+async function saveFact() {
+  const fact = $("fact-input").value.trim();
+  if (!fact) return;
+  $("save-btn").disabled = true;
+  try {
+    const r = await fetch("/memory?op=save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fact, scope: "global" }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || ("HTTP " + r.status));
+    setStatus(`Saved → ${escHtml(data.path)}`, "ok");
+    $("fact-input").value = "";
+    setTimeout(loadTree, 600);
+  } catch (err) {
+    setStatus(`Save failed: ${escHtml(err.message)}`, "err");
+  } finally {
+    $("save-btn").disabled = false;
+  }
+}
+
+$("recall-btn").addEventListener("click", runRecall);
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") runRecall(); });
+$("save-btn").addEventListener("click", saveFact);
+$("fact-input").addEventListener("keydown", (e) => { if (e.key === "Enter") saveFact(); });
+$("reload-btn").addEventListener("click", loadTree);
+
+loadTree();
+</script>
+</body>
+</html>

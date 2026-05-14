@@ -26,6 +26,12 @@ import http from "node:http";
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
+import {
+  recall as memoryRecall,
+  saveFact as memorySaveFact,
+  recordTurn as memoryRecordTurn,
+  distillFacts as memoryDistill,
+} from "../src/memory/cloud-memory.mjs";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -289,7 +295,7 @@ async function execWinTool(name, args) {
   }
 }
 
-// ── Linux shell tools for the coordinator (always available) ──────────────────
+// ── Linux shell + memory tools for the coordinator (always available) ────────
 
 const LINUX_TOOLS = [
   {
@@ -311,6 +317,61 @@ const LINUX_TOOLS = [
     },
   },
 ];
+
+const MEMORY_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "memory_recall",
+      description:
+        "Search the persistent cross-session memory + the markdown/html vault " +
+        "(solis-agent-files/memory and vault). Returns ranked snippets relevant to the query. " +
+        "Use this when prior conversations or stored notes might be useful.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          k:     { type: "integer", description: "Max snippets (default 5)" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "memory_save",
+      description:
+        "Persist a single durable fact to cross-session memory. Use for user identity, " +
+        "preferences, project facts, choices, and constraints that will help future runs.",
+      parameters: {
+        type: "object",
+        properties: {
+          fact: { type: "string", description: "One concise sentence" },
+          scope: { type: "string", enum: ["session", "global"] },
+        },
+        required: ["fact"],
+      },
+    },
+  },
+];
+
+async function execMemoryTool(name, args, ctx = {}) {
+  try {
+    if (name === "memory_recall") {
+      const k = Math.min(args.k ?? 5, 10);
+      const hits = await memoryRecall(args.query ?? "", { k });
+      return { query: args.query, hits };
+    }
+    if (name === "memory_save") {
+      const scope = args.scope === "session" ? (ctx.sessionId || "_global") : "_global";
+      return await memorySaveFact(args.fact ?? "", { sessionId: scope, source: "computer-mode" });
+    }
+    return { error: `Unknown memory tool: ${name}` };
+  } catch (e) { return { error: e.message }; }
+}
+
+const MEMORY_TOOL_NAMES = new Set(MEMORY_TOOLS.map(t => t.function.name));
 
 function execLinuxTool(name, args) {
   if (name !== "shell_exec") return Promise.resolve({ error: `Unknown Linux tool: ${name}` });
@@ -353,6 +414,13 @@ You have shell_exec to run any bash command on an Amazon Linux serverless host.
 - Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl
 - Use shell_exec for: HTTP calls, JSON parsing, file conversions, math/stats, anything concrete.
 - Prefer real commands over speculation.
+
+## Persistent Memory (always available)
+You have a cross-session memory backed by the solis-agent-files GitHub repo.
+- The most relevant snippets are auto-injected as <PRIOR_CONTEXT> at the start.
+- memory_recall(query): pull more snippets when you need to dig deeper.
+- memory_save(fact, scope): persist a durable fact (user identity, project facts,
+  preferences, decisions). Always save anything that will help future runs.
 ${winSection}
 ## Specialist Team
 ${SPECIALISTS.map(s => `- **${s.name}**: ${s.role}`).join("\n")}
@@ -563,13 +631,35 @@ You have been assigned a specific subtask as part of a larger collaborative effo
       })
     );
 
-    // ── Phase 3: Coordinator tool loop (Linux shell + optional Windows) ──────
-    // Always run this so the coordinator has shell access regardless of WIN_ENABLED.
+    // ── Phase 3: Coordinator tool loop (Linux shell + memory + optional Win) ─
+    // Always run this so the coordinator has shell + memory access regardless
+    // of WIN_ENABLED.
     send("phase", { phase: "executing", message: "Coordinator executing tools…" });
 
-    const activeTools = [...LINUX_TOOLS, ...(WIN_ENABLED ? WIN_TOOLS : [])];
+    const activeTools = [
+      ...LINUX_TOOLS,
+      ...MEMORY_TOOLS,
+      ...(WIN_ENABLED ? WIN_TOOLS : []),
+    ];
+
+    // Auto-inject relevant memory snippets at the top of the coordinator's
+    // context. Same pattern as /chat and /submit so behaviour stays consistent.
+    let memoryBlock = "";
+    try {
+      const hits = await memoryRecall(message.trim(), { k: 4 });
+      if (hits.length) {
+        memoryBlock =
+          `\n\n<PRIOR_CONTEXT note="Top relevant snippets from your persistent memory. Trust them as background, verify before acting on them.">\n` +
+          hits.map((h, i) => `[#${i + 1} ${h.path}]\n${h.snippet}`).join("\n\n") +
+          `\n</PRIOR_CONTEXT>`;
+        send("memory_hits", { count: hits.length, paths: hits.map(h => h.path) });
+      }
+    } catch {}
+
+    const coordinatorCtx = { sessionId: sessionId ?? null };
+
     const toolMessages = [
-      { role: "system", content: buildCoordinatorSystemPrompt() },
+      { role: "system", content: buildCoordinatorSystemPrompt() + memoryBlock },
       {
         role: "user",
         content:
@@ -577,6 +667,7 @@ You have been assigned a specific subtask as part of a larger collaborative effo
           `SPECIALIST CONTEXT (treat as advisory, not ground truth):\n` +
           specialistResults.map(r => `[${r.specialist.name}]: ${r.result.slice(0, 400)}`).join("\n\n") +
           `\n\nUse shell_exec for real work (data fetches, computation, file ops). ` +
+          `Use memory_recall to pull more prior context, and memory_save for any durable fact you learn. ` +
           (WIN_ENABLED ? `Use win_* tools when the task requires desktop interaction. ` : ``) +
           `When done, reply with a plain text summary of what you actually did and learned.`,
       },
@@ -616,12 +707,14 @@ You have been assigned a specific subtask as part of a larger collaborative effo
         let fnArgs = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || "{}"); } catch {}
 
-        const kind = LINUX_TOOL_NAMES.has(fnName) ? "linux"
-                   : WIN_TOOL_NAMES.has(fnName)   ? "windows"
+        const kind = LINUX_TOOL_NAMES.has(fnName)  ? "linux"
+                   : WIN_TOOL_NAMES.has(fnName)    ? "windows"
+                   : MEMORY_TOOL_NAMES.has(fnName) ? "memory"
                    : "unknown";
 
         const argPreview =
           fnArgs.command ?? fnArgs.script ?? fnArgs.app ?? fnArgs.text ??
+          fnArgs.query ?? fnArgs.fact ??
           fnArgs.key ?? (fnArgs.keys && fnArgs.keys.join("+")) ??
           (fnArgs.x !== undefined ? `${fnArgs.x},${fnArgs.y}` : "") ?? "";
 
@@ -634,9 +727,10 @@ You have been assigned a specific subtask as part of a larger collaborative effo
         });
 
         let result;
-        if (kind === "linux")   result = await execLinuxTool(fnName, fnArgs);
+        if (kind === "linux")        result = await execLinuxTool(fnName, fnArgs);
         else if (kind === "windows") result = await execWinTool(fnName, fnArgs);
-        else                    result = { error: `Unknown tool: ${fnName}` };
+        else if (kind === "memory")  result = await execMemoryTool(fnName, fnArgs, coordinatorCtx);
+        else                         result = { error: `Unknown tool: ${fnName}` };
 
         // Compact result preview for the UI (the LLM gets the full JSON below).
         const preview =
@@ -710,6 +804,18 @@ Synthesize everything into the best possible final answer.`,
 
     send("reply", { text: finalAnswer });
     sseWrite("done");
+
+    // ── Persistent memory side-effects (best-effort, non-blocking) ───────────
+    if (sessionId) {
+      memoryRecordTurn(sessionId, message.trim(), finalAnswer).catch(() => {});
+      const llmShim = async (msgs) =>
+        await nimCall(COORDINATOR.model, coordinatorKey, msgs, 600).catch(() => "");
+      const synthHistory = [
+        { role: "user", content: message.trim() },
+        { role: "assistant", content: finalAnswer },
+      ];
+      memoryDistill(sessionId, synthHistory, llmShim).catch(() => {});
+    }
   } catch (err) {
     send("error", { text: err.message });
   }

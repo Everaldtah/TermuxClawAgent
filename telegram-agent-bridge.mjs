@@ -886,7 +886,7 @@ async function main() {
   mkdirSync(join(VAULT_PATH, "Memory", "Facts"), { recursive: true });
 
   console.log("🤖 Solis (TermuxClawAgent) starting…");
-  console.log(`   GitHub sync: ${process.env.GITHUB_TOKEN ? "enabled (" + (process.env.GITHUB_STORAGE_REPO ?? "Everaldtah/termuxclawagent-files") + ")" : "disabled (set GITHUB_TOKEN to enable)"}`);
+  console.log(`   GitHub sync: ${process.env.GITHUB_TOKEN ? "enabled (" + (process.env.GITHUB_STORAGE_REPO ?? "Everaldtah/solis-agent-files") + ")" : "disabled (set GITHUB_TOKEN to enable)"}`);
 
   // Two-way vault sync on startup
   if (process.env.GITHUB_TOKEN) {

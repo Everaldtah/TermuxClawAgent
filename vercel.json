@@ -9,7 +9,8 @@
     "api/computer.js": { "maxDuration": 300 },
     "api/job.js":      { "maxDuration": 30  },
     "api/activity.js": { "maxDuration": 30  },
-    "api/desktop.js":  { "maxDuration": 60  }
+    "api/desktop.js":  { "maxDuration": 60  },
+    "api/memory.js":   { "maxDuration": 30  }
   },
   "routes": [
     { "src": "/webhook",  "dest": "/api/webhook.js"  },
@@ -18,10 +19,11 @@
     { "src": "/job",      "dest": "/api/job.js"      },
     { "src": "/activity", "dest": "/api/activity.js" },
     { "src": "/computer", "dest": "/api/computer.js" },
-    { "src": "/desktop",  "dest": "/api/desktop.js"  }
+    { "src": "/desktop",  "dest": "/api/desktop.js"  },
+    { "src": "/memory",   "dest": "/api/memory.js"   }
   ],
   "env": {
-    "GITHUB_STORAGE_REPO": "Everaldtah/termuxclawagent-files",
+    "GITHUB_STORAGE_REPO": "Everaldtah/solis-agent-files",
     "GITHUB_STORAGE_BRANCH": "main",
     "MODEL": "moonshotai/kimi-k2.6",
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",

@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
 import { pullSession, pushSession } from "../src/storage/sessions.mjs";
 import { nextApiKey, poolSize } from "../src/storage/keypool.mjs";
+import { recall as memoryRecall, saveFact as memorySaveFact, recordTurn as memoryRecordTurn, distillFacts as memoryDistill } from "../src/memory/cloud-memory.mjs";
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
@@ -63,7 +64,16 @@ You are powered by ${model} via ${providerName}, running on Vercel cloud.
 - **vault_write**: Write a note to the GitHub memory vault
 - **vault_list**: List vault notes
 - **vault_search**: Full-text search across vault
+- **memory_recall**: Search persistent memory + vault (RAG) for prior context
+- **memory_save**: Save a durable fact that will survive across sessions
 - **http_get**: Make an HTTP GET request
+
+## Persistent Memory
+You have a cross-session memory backed by GitHub at solis-agent-files/memory/.
+Relevant snippets are auto-injected as <PRIOR_CONTEXT> at the start of each turn.
+If you learn something durable (user preferences, project facts, choices), call
+memory_save to persist it. Use memory_recall to dig deeper when the auto-context
+isn't enough.
 
 ## Shell environment
 - OS: Amazon Linux (Vercel serverless)
@@ -173,13 +183,43 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "memory_recall",
+      description: "Search persistent cross-session memory + the markdown/html vault for snippets relevant to a query. Use when prior context might be useful.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "What to recall (a question or topic)" },
+          k: { type: "integer", description: "Max number of snippets (default 5)" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "memory_save",
+      description: "Save a durable fact to persistent memory. Use for user identity, preferences, project facts, and any cross-session knowledge.",
+      parameters: {
+        type: "object",
+        properties: {
+          fact: { type: "string", description: "One concise fact (single sentence)" },
+          scope: { type: "string", enum: ["session", "global"], description: "session = this session only; global = all sessions for this user (default global)" },
+        },
+        required: ["fact"],
+      },
+    },
+  },
 ];
 
 // ── Tool executor ─────────────────────────────────────────────────────────────
 
 const vaultCache = new Map();
 
-async function execTool(name, args) {
+async function execTool(name, args, ctx = {}) {
   try {
     switch (name) {
       case "shell_exec": {
@@ -245,6 +285,16 @@ async function execTool(name, args) {
           }).on("error", e => res({ error: e.message }))
         );
       }
+      case "memory_recall": {
+        const k = Math.min(args.k ?? 5, 10);
+        const hits = await memoryRecall(args.query ?? "", { k });
+        return { query: args.query, hits };
+      }
+      case "memory_save": {
+        const scope = args.scope === "session" ? (ctx.sessionId || "_global") : "_global";
+        const r = await memorySaveFact(args.fact ?? "", { sessionId: scope, source: "agent" });
+        return r;
+      }
       default: return { error: `Unknown tool: ${name}` };
     }
   } catch (err) {
@@ -300,7 +350,7 @@ async function llmPostRetry(baseUrl, apiKey, body, retries = 2) {
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
-async function runAgent(userText, history, send, providerCfg = {}) {
+async function runAgent(userText, history, send, providerCfg = {}, ctx = {}) {
   const {
     apiKey   = DEFAULT_API_KEY,
     baseUrl  = DEFAULT_BASE_URL,
@@ -308,7 +358,21 @@ async function runAgent(userText, history, send, providerCfg = {}) {
     provider = "NVIDIA NIM",
   } = providerCfg;
 
-  const systemPrompt = buildSystemPrompt(model, provider);
+  let systemPrompt = buildSystemPrompt(model, provider);
+
+  // ── Auto-inject relevant memory snippets (RAG) ───────────────────────────────
+  // Pulled once at the start of the turn from memory/** + vault/** in the
+  // storage repo. Gives the agent prior-session context without any tool call.
+  try {
+    const hits = await memoryRecall(userText, { k: 4 });
+    if (hits.length) {
+      const block = hits
+        .map((h, i) => `[#${i + 1} ${h.path}]\n${h.snippet}`)
+        .join("\n\n");
+      systemPrompt += `\n\n<PRIOR_CONTEXT note="Top relevant snippets from your persistent memory. Trust them as background, verify before acting on them.">\n${block}\n</PRIOR_CONTEXT>`;
+      send("memory_hits", { count: hits.length, paths: hits.map(h => h.path) });
+    }
+  } catch {}
 
   history.push({ role: "user", content: userText });
   const getMessages = () => [{ role: "system", content: systemPrompt }, ...history.slice(-HISTORY_MAX_MSGS)];
@@ -364,7 +428,7 @@ async function runAgent(userText, history, send, providerCfg = {}) {
       const keyArg = fnArgs.command || fnArgs.note_path || fnArgs.path || fnArgs.query || fnArgs.url || "";
       send("tool_call", { tool: fnName, args: String(keyArg).slice(0, 150) || JSON.stringify(fnArgs).slice(0, 150) });
 
-      const result = await execTool(fnName, fnArgs);
+      const result = await execTool(fnName, fnArgs, ctx);
       const out = result.stdout ?? result.content ?? result.error ?? JSON.stringify(result);
       send("tool_result", { text: String(out).slice(0, 500) });
 
@@ -508,11 +572,24 @@ export default async function handler(req, res) {
     const history = stored ?? [];
 
     send("provider", { name: providerCfg.provider, model: providerCfg.model, poolSize: providerCfg.poolSize });
-    const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg);
+    const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg, { sessionId });
     if (currentRound) { rounds.push(currentRound); currentRound = null; }
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
     pushSession(webSessionKey, JSON.stringify(toSave, null, 2)).catch(() => {});
+
+    // ── Persistent memory side-effects (best-effort, non-blocking on errors) ──
+    memoryRecordTurn(sessionId, message.trim(), reply).catch(() => {});
+
+    // Distil durable facts using one cheap LLM call. We hand it a minimal LLM
+    // shim that maps onto our existing llmPostRetry.
+    const llmShim = async (msgs) => {
+      const r = await llmPostRetry(providerCfg.baseUrl, providerCfg.apiKey, {
+        model: providerCfg.model, messages: msgs, max_tokens: 600, temperature: 0.3, top_p: 1.0, stream: false,
+      });
+      return r?.choices?.[0]?.message?.content ?? "";
+    };
+    memoryDistill(sessionId, updated, llmShim).catch(() => {});
 
     sseWrite("reply", { text: reply });
     sseWrite("done");
