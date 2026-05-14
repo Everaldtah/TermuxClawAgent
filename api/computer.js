@@ -41,7 +41,7 @@ const CALL_TIMEOUT = 180_000; // 3 min per LLM call
 
 const COORDINATOR = {
   name: "Kimi K2.6",
-  model: process.env.MODEL ?? "moonshotai/kimi-k2.6",
+  model: process.env.MODEL ?? "meta/llama-3.3-70b-instruct",
   apiKey: process.env.NVIDIA_API_KEY ?? "",
   baseUrl: NIM_BASE,
 };

@@ -91,7 +91,7 @@ export default async function handler(req, res) {
       tokenSet: has("GITHUB_TOKEN"),
     },
     model: {
-      coordinator: process.env.MODEL || "moonshotai/kimi-k2.6",
+      coordinator: process.env.MODEL || "meta/llama-3.3-70b-instruct",
       baseUrl: process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
     },
     keys: {
