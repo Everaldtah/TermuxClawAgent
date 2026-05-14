@@ -37,20 +37,25 @@ import {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const NIM_BASE = "https://integrate.api.nvidia.com/v1";
-const CALL_TIMEOUT = 180_000; // 3 min per LLM call
+const CALL_TIMEOUT = 180_000;         // 3 min per coordinator/synthesis call
+const SPECIALIST_TIMEOUT = 60_000;    // 1 min per specialist — fail fast on broken/slow models
 
 const COORDINATOR = {
-  name: "Kimi K2.6",
+  name: "Llama 3.3 70B",
   model: process.env.MODEL ?? "meta/llama-3.3-70b-instruct",
   apiKey: process.env.NVIDIA_API_KEY ?? "",
   baseUrl: NIM_BASE,
 };
 
+// Specialists keep their dedicated keys (rate-limit isolation) but the model
+// behind each slot is chosen for *availability* on NIM right now. Verified
+// 2026-05-14 via /diag?ping=. If a model goes down again, swap the model
+// string here and redeploy — the key wiring remains stable.
 const SPECIALISTS = [
-  { id: 1, name: "DeepSeek V4 Pro",  model: "deepseek-ai/deepseek-v4-pro",  apiKey: process.env.NVIDIA_KEY_DEEPSEEK ?? "", role: "Deep reasoning, math, and code analysis" },
-  { id: 2, name: "GLM-5.1",          model: "z-ai/glm-5.1",                 apiKey: process.env.NVIDIA_KEY_GLM     ?? "", role: "Structured thinking and language tasks" },
-  { id: 3, name: "Qwen 3.5-397B",    model: "qwen/qwen3.5-397b-a17b",       apiKey: process.env.NVIDIA_KEY_QWEN    ?? "", role: "Factual research and broad knowledge" },
-  { id: 4, name: "MiniMax M2.7",     model: "minimaxai/minimax-m2.7",       apiKey: process.env.NVIDIA_KEY_MINIMAX ?? "", role: "Creative synthesis and diverse perspectives" },
+  { id: 1, name: "Llama-3.3 (DS slot)", model: "meta/llama-3.3-70b-instruct", apiKey: process.env.NVIDIA_KEY_DEEPSEEK ?? "", role: "Deep reasoning, math, and code analysis" },
+  { id: 2, name: "GLM-5.1",             model: "z-ai/glm-5.1",                apiKey: process.env.NVIDIA_KEY_GLM     ?? "", role: "Structured thinking and language tasks" },
+  { id: 3, name: "Qwen 3.5-397B",       model: "qwen/qwen3.5-397b-a17b",      apiKey: process.env.NVIDIA_KEY_QWEN    ?? "", role: "Factual research and broad knowledge" },
+  { id: 4, name: "Llama-3.1 (MM slot)", model: "meta/llama-3.1-70b-instruct", apiKey: process.env.NVIDIA_KEY_MINIMAX ?? "", role: "Creative synthesis and diverse perspectives" },
 ];
 
 const BRIDGE_URL   = process.env.WINDOWS_BRIDGE_URL   ?? "";
@@ -63,7 +68,7 @@ const MAX_COORDINATOR_ROUNDS = parseInt(process.env.COMPUTER_MAX_ROUNDS ?? "10",
 const keepAlive = new https.Agent({ keepAlive: true, keepAliveMsecs: 30_000 });
 
 // Raw call — returns the full message object (so callers can inspect tool_calls).
-function nimCallRaw(model, apiKey, messages, { maxTokens = 4096, tools = null } = {}) {
+function nimCallRaw(model, apiKey, messages, { maxTokens = 4096, tools = null, timeoutMs = CALL_TIMEOUT } = {}) {
   return new Promise((resolve, reject) => {
     const payload = {
       model,
@@ -80,7 +85,7 @@ function nimCallRaw(model, apiKey, messages, { maxTokens = 4096, tools = null } 
     }
     const body = JSON.stringify(payload);
 
-    const timer = setTimeout(() => { req.destroy(); reject(new Error(`LLM timeout: ${model}`)); }, CALL_TIMEOUT);
+    const timer = setTimeout(() => { req.destroy(); reject(new Error(`LLM timeout (${timeoutMs}ms): ${model}`)); }, timeoutMs);
     let settled = false;
     const done = (fn) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
 
@@ -115,15 +120,15 @@ function nimCallRaw(model, apiKey, messages, { maxTokens = 4096, tools = null } 
 }
 
 // Convenience: just the content string (used by specialists + synthesis).
-function nimCall(model, apiKey, messages, maxTokens = 4096) {
-  return nimCallRaw(model, apiKey, messages, { maxTokens }).then(m => m?.content ?? "");
+function nimCall(model, apiKey, messages, maxTokens = 4096, timeoutMs = CALL_TIMEOUT) {
+  return nimCallRaw(model, apiKey, messages, { maxTokens, timeoutMs }).then(m => m?.content ?? "");
 }
 
 // Retry wrapper for content-only calls
-async function nimCallRetry(model, apiKey, messages, maxTokens = 4096, retries = 2) {
+async function nimCallRetry(model, apiKey, messages, maxTokens = 4096, retries = 2, timeoutMs = CALL_TIMEOUT) {
   let last;
   for (let i = 0; i <= retries; i++) {
-    try { return await nimCall(model, apiKey, messages, maxTokens); }
+    try { return await nimCall(model, apiKey, messages, maxTokens, timeoutMs); }
     catch (e) { last = e; if (i < retries) await new Promise(r => setTimeout(r, 2000 * (i + 1))); }
   }
   throw last;
@@ -641,7 +646,9 @@ You have been assigned a specific subtask as part of a larger collaborative effo
                 content: `ORIGINAL QUESTION: ${message.trim()}\n\nYOUR SUBTASK: ${a.task}\n\nProvide a detailed, focused answer for your specific subtask.`,
               },
             ],
-            4096
+            4096,
+            1,                      // retries = 1 (cap total wait)
+            SPECIALIST_TIMEOUT      // 60s per attempt — fail fast on broken models
           );
           send("specialist_done", { taskId: a.id, model: a.specialist.name, result: result.slice(0, 800) });
           return { ...a, result, ok: true };
