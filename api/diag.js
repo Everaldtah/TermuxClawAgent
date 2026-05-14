@@ -76,8 +76,10 @@ export default async function handler(req, res) {
     if (!key) {
       pings = { error: "no NIM key available in pool" };
     } else {
-      pings = {};
-      for (const m of models) pings[m] = await nimPing(m, key);
+      // Run in parallel with a tight per-call timeout so the whole endpoint
+      // returns well within the function's maxDuration even if some models hang.
+      const results = await Promise.all(models.map(m => nimPing(m, key, 12000).then(r => [m, r])));
+      pings = Object.fromEntries(results);
     }
   }
 
