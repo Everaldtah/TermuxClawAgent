@@ -18,6 +18,7 @@ import https from "node:https";
 import { exec } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
 import { pullSession, pushSession } from "../src/storage/sessions.mjs";
 import { nextApiKey, poolSize } from "../src/storage/keypool.mjs";
@@ -418,9 +419,88 @@ export default async function handler(req, res) {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
 
-  const send = (type, data = {}) => {
+  // ── Dual-track: SSE for live UX + GitHub job record for page-leave survival ─
+  const jobId = randomUUID();
+  const created = Date.now();
+  const jobPath = `sessions/jobs/${jobId}.json`;
+  const jobBase = {
+    id: jobId,
+    mode: "chat",
+    status: "running",
+    message: message.trim(),
+    sessionId,
+    provider: providerCfg.provider,
+    model: providerCfg.model,
+    created,
+    updated: created,
+    rounds: [],
+    reply: null,
+    error: null,
+    durationMs: null,
+  };
+
+  const rounds = [];
+  let currentRound = null;
+
+  async function ghSafeWrite(content) {
+    try {
+      const existing = await ghRead(jobPath);
+      await ghWrite(jobPath, content, existing?.sha ?? null);
+    } catch {
+      try {
+        const fresh = await ghRead(jobPath);
+        await ghWrite(jobPath, content, fresh?.sha ?? null);
+      } catch {}
+    }
+  }
+
+  // Serialized write chain so concurrent updates don't race the GitHub sha
+  let writeChain = ghSafeWrite(JSON.stringify(jobBase, null, 2));
+  const persistState = (overrides = {}) => {
+    const snap = {
+      ...jobBase,
+      ...overrides,
+      rounds: currentRound ? [...rounds, currentRound] : [...rounds],
+      updated: Date.now(),
+    };
+    writeChain = writeChain.then(() => ghSafeWrite(JSON.stringify(snap, null, 2))).catch(() => {});
+  };
+
+  // Tell the client its jobId immediately so it can persist and reattach on reload.
+  // We deliberately ignore SSE write failures everywhere — the agent must keep
+  // running even after the browser disconnects.
+  const sseWrite = (type, data = {}) => {
     try { res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`); } catch {}
   };
+  sseWrite("job", { jobId });
+
+  // Wrap `send` so every event also updates the job record.
+  const send = (type, data = {}) => {
+    sseWrite(type, data);
+    switch (type) {
+      case "round":
+        if (currentRound) rounds.push(currentRound);
+        currentRound = { round: data.round, thinking: "", toolCalls: [] };
+        persistState();
+        break;
+      case "thinking":
+        if (currentRound) currentRound.thinking = data.text;
+        break;
+      case "tool_call":
+        if (currentRound) currentRound.toolCalls.push({ tool: data.tool, args: data.args, result: "" });
+        break;
+      case "tool_result":
+        if (currentRound) {
+          const tc = currentRound.toolCalls[currentRound.toolCalls.length - 1];
+          if (tc) tc.result = data.text;
+        }
+        break;
+    }
+  };
+
+  // Detach the run from the request — if the client disconnects, the function
+  // keeps running until Vercel's maxDuration. We deliberately do NOT abort on close.
+  req.on?.("close", () => { /* no-op; let the agent finish */ });
 
   try {
     const webSessionKey = `web_${sessionId}`;
@@ -429,15 +509,36 @@ export default async function handler(req, res) {
 
     send("provider", { name: providerCfg.provider, model: providerCfg.model, poolSize: providerCfg.poolSize });
     const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg);
+    if (currentRound) { rounds.push(currentRound); currentRound = null; }
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
     pushSession(webSessionKey, JSON.stringify(toSave, null, 2)).catch(() => {});
 
-    send("reply", { text: reply });
-    send("done");
+    sseWrite("reply", { text: reply });
+    sseWrite("done");
+
+    await writeChain;
+    await ghSafeWrite(JSON.stringify({
+      ...jobBase,
+      status: "done",
+      rounds,
+      reply,
+      updated: Date.now(),
+      durationMs: Date.now() - created,
+    }, null, 2));
   } catch (err) {
-    send("error", { text: err.message });
+    sseWrite("error", { text: err.message });
+    if (currentRound) { rounds.push(currentRound); currentRound = null; }
+    await writeChain;
+    await ghSafeWrite(JSON.stringify({
+      ...jobBase,
+      status: "error",
+      rounds,
+      error: err.message,
+      updated: Date.now(),
+      durationMs: Date.now() - created,
+    }, null, 2)).catch(() => {});
   }
 
-  res.end();
+  try { res.end(); } catch {}
 }

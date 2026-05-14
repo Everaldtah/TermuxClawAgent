@@ -92,6 +92,12 @@
     .cm-task-text{color:#94a3b8}
     .cm-result-preview{margin-top:4px;font-size:0.68rem;color:#334155;max-height:60px;overflow:hidden}
     .cm-win-action{background:#0a1a0a;border:1px solid #22c55e22;border-radius:6px;padding:6px 10px;font-size:0.73rem;color:#4ade80;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+    .cm-tool-action{background:#0b0f17;border:1px solid #1e293b;border-radius:6px;padding:7px 10px;font-size:0.73rem;color:#cbd5e1;margin-bottom:6px}
+    .cm-tool-action.pending{border-color:#f59e0b55}
+    .cm-ta-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .cm-ta-args{color:#64748b;font-family:ui-monospace,Menlo,monospace;font-size:0.7rem;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+    .cm-ta-spin{color:#f59e0b;animation:pulse 1s infinite}
+    .cm-ta-result{margin:6px 0 0;padding:6px 8px;background:#000;border-radius:4px;color:#86efac;font-family:ui-monospace,Menlo,monospace;font-size:0.7rem;line-height:1.45;white-space:pre-wrap;max-height:200px;overflow:auto}
 
     /* Input bar */
     .input-bar{display:flex;gap:6px;padding:10px 14px;border-top:1px solid #181818;background:#0e0e0e;flex-wrap:wrap;align-items:center}
@@ -600,6 +606,40 @@ function handleComputerEvent(evt) {
       break;
     }
 
+    case 'tool_action': {
+      const wEl = document.getElementById('cm-win-actions');
+      if (!wEl) break;
+      const isLinux = evt.kind === 'linux';
+      const icon = isLinux ? '🐧' : (evt.kind === 'windows' ? '🪟' : '🔧');
+      const id = `cm-act-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      // If this is the "pending" marker (no result yet), render with a spinner;
+      // when the matching result arrives, replace the last pending row.
+      if (evt.pending) {
+        const div = document.createElement('div');
+        div.className = 'cm-tool-action pending';
+        div.dataset.action = evt.action;
+        div.innerHTML = `<div class="cm-ta-head">${icon} <strong>${escHtml(evt.action)}</strong> <span class="cm-ta-args">${escHtml(evt.args||'')}</span> <span class="cm-ta-spin">…</span></div>`;
+        wEl.appendChild(div);
+      } else {
+        // Find the latest pending row for this action and fill it; if none, append a new one.
+        const pendings = wEl.querySelectorAll(`.cm-tool-action.pending[data-action="${evt.action}"]`);
+        const target = pendings.length ? pendings[pendings.length - 1] : (() => {
+          const d = document.createElement('div');
+          d.className = 'cm-tool-action';
+          d.innerHTML = `<div class="cm-ta-head">${icon} <strong>${escHtml(evt.action)}</strong> <span class="cm-ta-args">${escHtml(evt.args||'')}</span></div>`;
+          wEl.appendChild(d);
+          return d;
+        })();
+        target.classList.remove('pending');
+        const res = document.createElement('pre');
+        res.className = 'cm-ta-result';
+        res.textContent = (evt.result || '').slice(0, 2000);
+        target.appendChild(res);
+      }
+      scrollBottom();
+      break;
+    }
+
     case 'reply': {
       const replyEl = document.getElementById('cm-reply');
       if (replyEl) replyEl.innerHTML = renderMd(evt.text);
@@ -648,7 +688,12 @@ async function sendMessage() {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         let evt; try { evt=JSON.parse(line.slice(6)); } catch { continue; }
-        if (['round','thinking','tool_call','tool_result','provider'].includes(evt.type)) {
+        if (evt.type === 'job') {
+          // Server has registered a background job for this prompt. Persist
+          // immediately so closing the tab does not lose the work — pollJobs
+          // will pick up the final result on return.
+          upsertJob({ id: evt.jobId, status:'running', mode:'chat', message: text, created: Date.now(), rounds: [], reply: null });
+        } else if (['round','thinking','tool_call','tool_result','provider'].includes(evt.type)) {
           handleFeedEvent(evt);
         } else if (evt.type === 'reply') {
           if (liveCurrentRound) liveRounds.push(liveCurrentRound);
@@ -666,7 +711,7 @@ async function sendMessage() {
     }
   } catch (err) {
     endThinkingFeed();
-    addMessage('agent', '❌ Connection error: ' + err.message);
+    addMessage('agent', '⚠️ Lost connection — task is still running in the background. Reopen the app to see the result.');
     setStatus('ready');
   }
 
@@ -701,6 +746,10 @@ async function sendComputerMode(text) {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
         let evt; try { evt=JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.type === 'job') {
+          upsertJob({ id: evt.jobId, status:'running', mode:'computer', message: text, created: Date.now(), rounds: [], reply: null });
+          continue;
+        }
         if (evt.type==='phase') setStatus(evt.phase+'…');
         if (evt.type==='done') setStatus('ready');
         handleComputerEvent(evt);
@@ -709,7 +758,7 @@ async function sendComputerMode(text) {
   } catch (err) {
     if (computerMsgEl) {
       const ph = document.getElementById('cm-phase-text');
-      if (ph) ph.textContent = 'Error: ' + err.message;
+      if (ph) ph.textContent = '⚠️ Lost connection — task continues running. Check the Jobs panel.';
     }
     setStatus('ready');
   }
@@ -752,6 +801,25 @@ function renderJobs(){
       }).join('');
       roundsHtml=`<div class="job-rounds" id="jr-${escHtml(job.id)}">${roundsInner}</div>
       <button class="jr-toggle" onclick="toggleRounds('${escHtml(job.id)}')">▶ ${rc} round${rc!==1?'s':''} of reasoning</button>`;
+    }
+
+    // Computer-mode tool actions (shell + windows) — shown when this is a Computer Mode job
+    let toolActionsHtml='';
+    const toolActions=job.toolActions||[];
+    if(toolActions.length){
+      const inner=toolActions.map(ta=>{
+        const icon=ta.kind==='linux'?'🐧':ta.kind==='windows'?'🪟':'🔧';
+        return `<div class="jr-tool">${icon} <strong>${escHtml(ta.action)}</strong> <span style="color:#64748b;font-family:ui-monospace,monospace">${escHtml((ta.args||'').slice(0,150))}</span>${ta.result?`<pre class="jr-res">${escHtml((ta.result||'').slice(0,600))}</pre>`:''}</div>`;
+      }).join('');
+      toolActionsHtml=`<div class="job-rounds open" style="margin-top:6px">${inner}</div>`;
+    }
+    // Computer-mode plan + specialists summary
+    let planHtml='';
+    if(job.mode==='computer'&&Array.isArray(job.plan)&&job.plan.length){
+      planHtml='<div class="jr-rlabel" style="margin-top:6px">Plan</div>'+job.plan.map(p=>`<div class="jr-tool">▸ <strong>${escHtml(p.model||'')}</strong> ${escHtml((p.task||'').slice(0,140))}</div>`).join('');
+    }
+    if(planHtml||toolActionsHtml){
+      roundsHtml=`<div class="job-rounds open">${planHtml}${toolActionsHtml}</div>`+roundsHtml;
     }
 
     const actions=job.status==='done'

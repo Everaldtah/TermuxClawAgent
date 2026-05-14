@@ -24,6 +24,8 @@
 import https from "node:https";
 import http from "node:http";
 import { exec } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -47,22 +49,29 @@ const SPECIALISTS = [
 const BRIDGE_URL   = process.env.WINDOWS_BRIDGE_URL   ?? "";
 const BRIDGE_TOKEN = process.env.WINDOWS_BRIDGE_TOKEN ?? "";
 const WIN_ENABLED  = !!BRIDGE_URL;
+const MAX_COORDINATOR_ROUNDS = parseInt(process.env.COMPUTER_MAX_ROUNDS ?? "10", 10);
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 const keepAlive = new https.Agent({ keepAlive: true, keepAliveMsecs: 30_000 });
 
-function nimCall(model, apiKey, messages, maxTokens = 4096, stream = false) {
+// Raw call — returns the full message object (so callers can inspect tool_calls).
+function nimCallRaw(model, apiKey, messages, { maxTokens = 4096, tools = null } = {}) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
+    const payload = {
       model,
       messages,
       max_tokens: maxTokens,
       temperature: 0.7,
       top_p: 0.95,
-      stream,
+      stream: false,
       chat_template_kwargs: { thinking: false },
-    });
+    };
+    if (tools && tools.length) {
+      payload.tools = tools;
+      payload.tool_choice = "auto";
+    }
+    const body = JSON.stringify(payload);
 
     const timer = setTimeout(() => { req.destroy(); reject(new Error(`LLM timeout: ${model}`)); }, CALL_TIMEOUT);
     let settled = false;
@@ -87,8 +96,8 @@ function nimCall(model, apiKey, messages, maxTokens = 4096, stream = false) {
           try {
             const parsed = JSON.parse(raw);
             if (parsed.error) reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
-            else resolve(parsed?.choices?.[0]?.message?.content ?? "");
-          } catch { resolve(raw.slice(0, 200)); }
+            else resolve(parsed?.choices?.[0]?.message ?? { content: "" });
+          } catch { resolve({ content: raw.slice(0, 200) }); }
         }));
         res.on("error", (e) => done(() => reject(e)));
       }
@@ -98,11 +107,26 @@ function nimCall(model, apiKey, messages, maxTokens = 4096, stream = false) {
   });
 }
 
-// Retry wrapper
+// Convenience: just the content string (used by specialists + synthesis).
+function nimCall(model, apiKey, messages, maxTokens = 4096) {
+  return nimCallRaw(model, apiKey, messages, { maxTokens }).then(m => m?.content ?? "");
+}
+
+// Retry wrapper for content-only calls
 async function nimCallRetry(model, apiKey, messages, maxTokens = 4096, retries = 2) {
   let last;
   for (let i = 0; i <= retries; i++) {
     try { return await nimCall(model, apiKey, messages, maxTokens); }
+    catch (e) { last = e; if (i < retries) await new Promise(r => setTimeout(r, 2000 * (i + 1))); }
+  }
+  throw last;
+}
+
+// Retry wrapper for tool-enabled calls
+async function nimCallToolsRetry(model, apiKey, messages, tools, maxTokens = 4096, retries = 2) {
+  let last;
+  for (let i = 0; i <= retries; i++) {
+    try { return await nimCallRaw(model, apiKey, messages, { maxTokens, tools }); }
     catch (e) { last = e; if (i < retries) await new Promise(r => setTimeout(r, 2000 * (i + 1))); }
   }
   throw last;
@@ -265,6 +289,48 @@ async function execWinTool(name, args) {
   }
 }
 
+// ── Linux shell tools for the coordinator (always available) ──────────────────
+
+const LINUX_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "shell_exec",
+      description:
+        "Execute a bash command on the Vercel Linux server (Amazon Linux). " +
+        "Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl. " +
+        "/tmp is writable. Returns stdout, stderr, exit_code.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Bash command to run" },
+          timeout_ms: { type: "integer", description: "Max ms (default 25000, max 60000)" },
+        },
+        required: ["command"],
+      },
+    },
+  },
+];
+
+function execLinuxTool(name, args) {
+  if (name !== "shell_exec") return Promise.resolve({ error: `Unknown Linux tool: ${name}` });
+  const timeout = Math.min(args.timeout_ms ?? 25000, 60000);
+  return new Promise(resolve =>
+    exec(
+      args.command,
+      { timeout, maxBuffer: 1024 * 512, shell: "/bin/bash" },
+      (err, stdout, stderr) => resolve({
+        stdout: (stdout ?? "").slice(0, 6000),
+        stderr: (stderr ?? "").slice(0, 2000),
+        exit_code: err?.code ?? 0,
+      })
+    )
+  );
+}
+
+const LINUX_TOOL_NAMES = new Set(LINUX_TOOLS.map(t => t.function.name));
+const WIN_TOOL_NAMES   = new Set(WIN_TOOLS.map(t => t.function.name));
+
 // ── Planning prompt ───────────────────────────────────────────────────────────
 
 function buildCoordinatorSystemPrompt() {
@@ -272,22 +338,30 @@ function buildCoordinatorSystemPrompt() {
     ? `\n## Windows Desktop Tools\nYou have full control of a live Windows 10 desktop. Use win_screenshot first to see the current state, then use the mouse/keyboard/shell tools to accomplish tasks.\n`
     : "\n## Windows Desktop\nNot configured (set WINDOWS_BRIDGE_URL to enable).\n";
 
-  return `You are Solis in Computer Mode — an AI coordinator managing a team of specialist AI models.
+  return `You are Solis in Computer Mode — an AI coordinator managing a team of specialist AI models with direct OS access.
 
 ## Your Role
 - Analyze the user's request
-- Decompose complex tasks and delegate subtasks to specialists
-- Use Windows desktop tools when the task requires real computer interaction
+- Use the Linux shell for any real work (data fetching, file processing, running scripts, web calls)
+- Delegate pure research/analysis subtasks to specialists
+- Use Windows desktop tools when the task requires real desktop interaction
 - Synthesize all results into a comprehensive final answer
+
+## Linux Shell Tool (always available)
+You have shell_exec to run any bash command on an Amazon Linux serverless host.
+- Writable scratch: /tmp (ephemeral)
+- Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl
+- Use shell_exec for: HTTP calls, JSON parsing, file conversions, math/stats, anything concrete.
+- Prefer real commands over speculation.
 ${winSection}
 ## Specialist Team
 ${SPECIALISTS.map(s => `- **${s.name}**: ${s.role}`).join("\n")}
 
 ## Rules
-- Use Windows tools (win_screenshot, win_click, etc.) when the task needs real desktop interaction
-- Always take a screenshot first before clicking to confirm coordinates
-- Delegate pure research/analysis subtasks to specialists
-- Be thorough. Show your work.`;
+- For factual or computational work, always reach for shell_exec instead of guessing.
+- For desktop work, always win_screenshot first before clicking — confirm coordinates.
+- Show your work. Call tools step by step rather than batching speculation.
+- Be thorough but concise.`;
 }
 
 // ── Vercel handler ────────────────────────────────────────────────────────────
@@ -311,9 +385,103 @@ export default async function handler(req, res) {
   res.setHeader("Connection", "keep-alive");
   res.flushHeaders?.();
 
-  const send = (type, data = {}) => {
+  // ── Dual-track: SSE + GitHub-persisted job record (page-leave survival) ────
+  const jobId = randomUUID();
+  const createdAt = Date.now();
+  const jobPath = `sessions/jobs/${jobId}.json`;
+  const jobBase = {
+    id: jobId,
+    mode: "computer",
+    status: "running",
+    message: message.trim(),
+    sessionId: sessionId ?? null,
+    provider: "Computer Mode",
+    model: COORDINATOR.model,
+    created: createdAt,
+    updated: createdAt,
+    phase: "initializing",
+    plan: [],
+    specialists: {},
+    toolActions: [],
+    reply: null,
+    error: null,
+    durationMs: null,
+    rounds: [],
+  };
+
+  async function ghSafeWrite(content) {
+    try {
+      const ex = await ghRead(jobPath);
+      await ghWrite(jobPath, content, ex?.sha ?? null);
+    } catch {
+      try {
+        const fresh = await ghRead(jobPath);
+        await ghWrite(jobPath, content, fresh?.sha ?? null);
+      } catch {}
+    }
+  }
+  let writeChain = ghSafeWrite(JSON.stringify(jobBase, null, 2));
+  const persist = () => {
+    const snap = { ...jobBase, updated: Date.now() };
+    writeChain = writeChain.then(() => ghSafeWrite(JSON.stringify(snap, null, 2))).catch(() => {});
+  };
+
+  const sseWrite = (type, data = {}) => {
     try { res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`); } catch {}
   };
+  sseWrite("job", { jobId });
+
+  const send = (type, data = {}) => {
+    sseWrite(type, data);
+    // Also mirror relevant events into the persisted job record
+    switch (type) {
+      case "phase":
+        jobBase.phase = data.phase ?? data.message ?? jobBase.phase;
+        persist();
+        break;
+      case "plan":
+        jobBase.plan = data.subtasks ?? [];
+        persist();
+        break;
+      case "specialist_start":
+        jobBase.specialists[data.taskId] = { model: data.model, status: "running" };
+        persist();
+        break;
+      case "specialist_done":
+        jobBase.specialists[data.taskId] = {
+          ...(jobBase.specialists[data.taskId] || {}),
+          model: data.model,
+          status: data.error ? "error" : "done",
+          result: data.result,
+        };
+        persist();
+        break;
+      case "tool_action":
+        jobBase.toolActions.push({
+          kind: data.kind, action: data.action,
+          args: data.args, result: data.result,
+          at: Date.now(),
+        });
+        persist();
+        break;
+      case "reply":
+        jobBase.reply = data.text;
+        jobBase.status = "done";
+        jobBase.phase = "done";
+        jobBase.durationMs = Date.now() - createdAt;
+        persist();
+        break;
+      case "error":
+        jobBase.error = data.text;
+        jobBase.status = "error";
+        jobBase.durationMs = Date.now() - createdAt;
+        persist();
+        break;
+    }
+  };
+
+  // Keep running after client disconnects (Vercel honours event loop up to maxDuration).
+  req.on?.("close", () => { /* no-op */ });
 
   try {
     // ── Phase 1: Planning ────────────────────────────────────────────────────
@@ -395,46 +563,114 @@ You have been assigned a specific subtask as part of a larger collaborative effo
       })
     );
 
-    // ── Phase 3: Windows desktop interaction (if needed + configured) ────────
-    let windowsContext = "";
-    if (WIN_ENABLED) {
-      const needsDesktop = /\b(open|launch|start|click|type|browse|download|install|run|execute|windows|desktop|screen|app|application|browser|file|folder|search|google)\b/i.test(message);
-      if (needsDesktop) {
-        send("phase", { phase: "desktop", message: "Taking control of Windows desktop…" });
+    // ── Phase 3: Coordinator tool loop (Linux shell + optional Windows) ──────
+    // Always run this so the coordinator has shell access regardless of WIN_ENABLED.
+    send("phase", { phase: "executing", message: "Coordinator executing tools…" });
 
-        const desktopMessages = [
-          { role: "system", content: buildCoordinatorSystemPrompt() },
-          {
-            role: "user",
-            content: `USER TASK: ${message.trim()}\n\nSPECIALIST CONTEXT:\n${specialistResults.map(r => `[${r.specialist.name}]: ${r.result.slice(0, 400)}`).join("\n\n")}\n\nNow use Windows tools to complete the desktop portion of this task. Start with win_screenshot to see the current state.`,
-          },
-        ];
+    const activeTools = [...LINUX_TOOLS, ...(WIN_ENABLED ? WIN_TOOLS : [])];
+    const toolMessages = [
+      { role: "system", content: buildCoordinatorSystemPrompt() },
+      {
+        role: "user",
+        content:
+          `USER TASK: ${message.trim()}\n\n` +
+          `SPECIALIST CONTEXT (treat as advisory, not ground truth):\n` +
+          specialistResults.map(r => `[${r.specialist.name}]: ${r.result.slice(0, 400)}`).join("\n\n") +
+          `\n\nUse shell_exec for real work (data fetches, computation, file ops). ` +
+          (WIN_ENABLED ? `Use win_* tools when the task requires desktop interaction. ` : ``) +
+          `When done, reply with a plain text summary of what you actually did and learned.`,
+      },
+    ];
 
-        let round = 0;
-        const MAX_WIN_ROUNDS = 8;
+    let executionSummary = "";
+    let round = 0;
 
-        while (round < MAX_WIN_ROUNDS) {
-          round++;
-          const wRes = await nimCallRetry(
-            COORDINATOR.model,
-            coordinatorKey,
-            desktopMessages,
-            4096
-          ).catch(e => ({ error: e.message }));
+    while (round < MAX_COORDINATOR_ROUNDS) {
+      round++;
+      send("round", { round });
 
-          if (typeof wRes === "string") {
-            // Text reply (done with desktop work)
-            windowsContext = wRes;
-            desktopMessages.push({ role: "assistant", content: wRes });
-            break;
-          }
+      const msg = await nimCallToolsRetry(
+        COORDINATOR.model,
+        coordinatorKey,
+        toolMessages,
+        activeTools,
+        4096,
+      ).catch(e => ({ content: `[coordinator error: ${e.message}]` }));
 
-          // Handle tool calls from a raw response object — won't happen because nimCallRetry returns text
-          // so just break
-          break;
+      const toolCalls = msg?.tool_calls;
+      const textOut   = msg?.content ?? "";
+
+      if (!toolCalls || toolCalls.length === 0) {
+        // No more tools — coordinator is done with the execution phase.
+        executionSummary = textOut;
+        toolMessages.push({ role: "assistant", content: textOut });
+        break;
+      }
+
+      // Persist the assistant turn (must include tool_calls so subsequent
+      // tool messages have a referent).
+      toolMessages.push({ role: "assistant", content: textOut || "", tool_calls: toolCalls });
+
+      for (const tc of toolCalls) {
+        const fnName = tc.function?.name;
+        let fnArgs = {};
+        try { fnArgs = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+
+        const kind = LINUX_TOOL_NAMES.has(fnName) ? "linux"
+                   : WIN_TOOL_NAMES.has(fnName)   ? "windows"
+                   : "unknown";
+
+        const argPreview =
+          fnArgs.command ?? fnArgs.script ?? fnArgs.app ?? fnArgs.text ??
+          fnArgs.key ?? (fnArgs.keys && fnArgs.keys.join("+")) ??
+          (fnArgs.x !== undefined ? `${fnArgs.x},${fnArgs.y}` : "") ?? "";
+
+        // Emit before execution so the UI shows the command immediately.
+        send("tool_action", {
+          kind, action: fnName,
+          args: String(argPreview).slice(0, 300),
+          result: "",
+          pending: true,
+        });
+
+        let result;
+        if (kind === "linux")   result = await execLinuxTool(fnName, fnArgs);
+        else if (kind === "windows") result = await execWinTool(fnName, fnArgs);
+        else                    result = { error: `Unknown tool: ${fnName}` };
+
+        // Compact result preview for the UI (the LLM gets the full JSON below).
+        const preview =
+          result?.stdout ??
+          result?.error  ??
+          (result?.ok ? (result.screenshot ? "[screenshot taken]" : "ok") : null) ??
+          JSON.stringify(result);
+
+        send("tool_action", {
+          kind, action: fnName,
+          args: String(argPreview).slice(0, 300),
+          result: String(preview).slice(0, 600),
+        });
+
+        // Special-case: emit win_screenshot images to the desktop viewer too.
+        if (fnName === "win_screenshot" && result?.screenshot) {
+          send("windows_action", { action: "screenshot", args: {}, screenshot: result.screenshot });
         }
+
+        // Strip screenshots out of LLM-bound payload — they balloon context.
+        const llmResult = (fnName === "win_screenshot" && result?.screenshot)
+          ? { ok: result.ok, width: result.width, height: result.height, screenshot: "[redacted-binary]" }
+          : result;
+
+        toolMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          name: fnName,
+          content: JSON.stringify(llmResult).slice(0, 8000),
+        });
       }
     }
+
+    const windowsContext = executionSummary;
 
     // ── Phase 4: Synthesis ───────────────────────────────────────────────────
     send("phase", { phase: "synthesizing", message: "Coordinator synthesizing all results…" });
@@ -459,7 +695,7 @@ You have been assigned a specific subtask as part of a larger collaborative effo
 
 SPECIALIST RESULTS:
 ${specialistContext}
-${windowsContext ? `\nWINDOWS DESKTOP WORK:\n${windowsContext}` : ""}
+${windowsContext ? `\nCOORDINATOR EXECUTION (shell + desktop work):\n${windowsContext}` : ""}
 
 Synthesize everything into the best possible final answer.`,
       },
@@ -473,10 +709,13 @@ Synthesize everything into the best possible final answer.`,
     );
 
     send("reply", { text: finalAnswer });
-    send("done");
+    sseWrite("done");
   } catch (err) {
     send("error", { text: err.message });
   }
 
-  res.end();
+  // Flush the final job record to GitHub before letting the function exit.
+  await writeChain.catch(() => {});
+  await ghSafeWrite(JSON.stringify({ ...jobBase, updated: Date.now() }, null, 2)).catch(() => {});
+  try { res.end(); } catch {}
 }
