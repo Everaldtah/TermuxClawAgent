@@ -538,6 +538,11 @@ export default async function handler(req, res) {
   };
   sseWrite("job", { jobId });
 
+  // Periodic keep-alive comment so the long SSE doesn't get idled out.
+  const keepAlive = setInterval(() => {
+    try { res.write(`: keep-alive ${Date.now()}\n\n`); } catch {}
+  }, 15000);
+
   // Wrap `send` so every event also updates the job record.
   const send = (type, data = {}) => {
     sseWrite(type, data);
@@ -617,5 +622,6 @@ export default async function handler(req, res) {
     }, null, 2)).catch(() => {});
   }
 
+  clearInterval(keepAlive);
   try { res.end(); } catch {}
 }

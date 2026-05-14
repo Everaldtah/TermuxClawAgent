@@ -711,7 +711,12 @@ async function sendMessage() {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+      // Try to surface the real server error message (e.g. "No API key available").
+      let detail = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) detail = j.error; } catch {}
+      throw new Error(detail);
+    }
     const reader = r.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -747,7 +752,13 @@ async function sendMessage() {
     }
   } catch (err) {
     endThinkingFeed();
-    addMessage('agent', '⚠️ Lost connection — task is still running in the background. Reopen the app to see the result.');
+    const msg = String(err?.message || err);
+    const isAuth = /api key|No API key/i.test(msg);
+    if (isAuth) {
+      addMessage('agent', '❌ ' + msg + '\n\nClick "⚙ API Configuration" above, pick your provider, paste your API key, and try again.');
+    } else {
+      addMessage('agent', '⚠️ ' + msg + ' — if the task started, it may still be running. Reopen the app to see the result.');
+    }
     setStatus('ready');
   }
 
@@ -769,7 +780,11 @@ async function sendComputerMode(text) {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+      let detail = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) detail = j.error; } catch {}
+      throw new Error(detail);
+    }
     const reader = r.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -792,9 +807,22 @@ async function sendComputerMode(text) {
       }
     }
   } catch (err) {
+    const msg = String(err?.message || err);
+    const isAuth = /api key|No API key/i.test(msg);
     if (computerMsgEl) {
       const ph = document.getElementById('cm-phase-text');
-      if (ph) ph.textContent = '⚠️ Lost connection — task continues running. Check the Jobs panel.';
+      if (ph) ph.textContent = (isAuth ? '❌ ' : '⚠️ ') + msg;
+      if (isAuth) {
+        const dot = document.querySelector('.cm-phase-dot');
+        if (dot) { dot.style.background = '#ef4444'; dot.style.animation = 'none'; }
+        const wrap = computerMsgEl.querySelector('div[id="cm-win-actions"]')?.parentElement;
+        if (wrap) {
+          const help = document.createElement('div');
+          help.style.cssText = 'margin-top:10px;padding:10px;background:#1e293b;border-radius:6px;color:#cbd5e1;font-size:0.78rem;line-height:1.5';
+          help.innerHTML = 'Open <strong>⚙ API Configuration</strong> above, pick a provider, paste your API key, then try again.';
+          wrap.appendChild(help);
+        }
+      }
     }
     setStatus('ready');
   }

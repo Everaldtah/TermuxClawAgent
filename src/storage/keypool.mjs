@@ -8,9 +8,12 @@
 
 import { redisIncr } from "./redis.mjs";
 
-// Collect all NVIDIA_API_KEY* env vars in sorted order
+// Collect all NVIDIA_API_KEY*  AND  NVIDIA_KEY_* env vars in sorted order.
+// Any NVIDIA-issued key on NIM can call any NIM-hosted model, so the
+// per-specialist keys (NVIDIA_KEY_DEEPSEEK, NVIDIA_KEY_GLM, …) double as
+// general-purpose coordinator keys when NVIDIA_API_KEY itself is unset.
 const KEY_POOL = Object.keys(process.env)
-  .filter(k => /^NVIDIA_API_KEY\d*$/.test(k))
+  .filter(k => /^NVIDIA_API_KEY\d*$/.test(k) || /^NVIDIA_KEY_[A-Z0-9_]+$/.test(k))
   .sort()
   .map(k => process.env[k])
   .filter(Boolean);

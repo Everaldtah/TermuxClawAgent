@@ -10,7 +10,8 @@
     "api/job.js":      { "maxDuration": 30  },
     "api/activity.js": { "maxDuration": 30  },
     "api/desktop.js":  { "maxDuration": 60  },
-    "api/memory.js":   { "maxDuration": 30  }
+    "api/memory.js":   { "maxDuration": 30  },
+    "api/diag.js":     { "maxDuration": 10  }
   },
   "routes": [
     { "src": "/webhook",  "dest": "/api/webhook.js"  },
@@ -20,7 +21,8 @@
     { "src": "/activity", "dest": "/api/activity.js" },
     { "src": "/computer", "dest": "/api/computer.js" },
     { "src": "/desktop",  "dest": "/api/desktop.js"  },
-    { "src": "/memory",   "dest": "/api/memory.js"   }
+    { "src": "/memory",   "dest": "/api/memory.js"   },
+    { "src": "/diag",     "dest": "/api/diag.js"     }
   ],
   "env": {
     "GITHUB_STORAGE_REPO": "Everaldtah/solis-agent-files",

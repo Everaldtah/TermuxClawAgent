@@ -26,6 +26,7 @@ import http from "node:http";
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
+import { nextApiKey as nextNimKey } from "../src/storage/keypool.mjs";
 import {
   recall as memoryRecall,
   saveFact as memorySaveFact,
@@ -444,8 +445,22 @@ export default async function handler(req, res) {
   const { message, sessionId, userApiKey, userProvider } = req.body ?? {};
   if (!message?.trim()) return res.status(400).json({ error: "missing message" });
 
-  const coordinatorKey = userApiKey?.trim() || COORDINATOR.apiKey;
-  if (!coordinatorKey) return res.status(400).json({ error: "No API key configured" });
+  // Pick a coordinator key in priority order:
+  //   1. user-supplied key from the UI's API Configuration panel
+  //   2. NVIDIA_API_KEY env var
+  //   3. any NVIDIA NIM key from the pool (NVIDIA_KEY_DEEPSEEK / _GLM / …)
+  // Any NIM-issued key can call any NIM-hosted model, so the specialist keys
+  // also work as a coordinator key fallback.
+  const poolKey = await nextNimKey().catch(() => "");
+  const coordinatorKey = (userApiKey?.trim()) || COORDINATOR.apiKey || poolKey;
+  if (!coordinatorKey) {
+    return res.status(400).json({
+      error:
+        "No NVIDIA NIM key available. Set NVIDIA_API_KEY (or any NVIDIA_KEY_*) " +
+        "in the Vercel project env, or paste a key into the API Configuration " +
+        "panel on the home page.",
+    });
+  }
 
   // SSE setup
   res.setHeader("Content-Type", "text/event-stream");
@@ -498,6 +513,12 @@ export default async function handler(req, res) {
     try { res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`); } catch {}
   };
   sseWrite("job", { jobId });
+
+  // SSE keep-alive comment every 15s so intermediaries and the browser don't
+  // drop the stream during long-running LLM calls.
+  const keepAlive = setInterval(() => {
+    try { res.write(`: keep-alive ${Date.now()}\n\n`); } catch {}
+  }, 15000);
 
   const send = (type, data = {}) => {
     sseWrite(type, data);
@@ -820,6 +841,7 @@ Synthesize everything into the best possible final answer.`,
     send("error", { text: err.message });
   }
 
+  clearInterval(keepAlive);
   // Flush the final job record to GitHub before letting the function exit.
   await writeChain.catch(() => {});
   await ghSafeWrite(JSON.stringify({ ...jobBase, updated: Date.now() }, null, 2)).catch(() => {});
