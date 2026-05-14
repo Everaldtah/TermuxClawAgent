@@ -33,6 +33,7 @@ import {
   recordTurn as memoryRecordTurn,
   distillFacts as memoryDistill,
 } from "../src/memory/cloud-memory.mjs";
+import { ubuntuExec, ubuntuSandboxAvailable, ubuntuSandboxBackend } from "../src/tools/ubuntu-sandbox.mjs";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -310,13 +311,31 @@ const LINUX_TOOLS = [
       name: "shell_exec",
       description:
         "Execute a bash command on the Vercel Linux server (Amazon Linux). " +
-        "Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl. " +
-        "/tmp is writable. Returns stdout, stderr, exit_code.",
+        "Fast, ephemeral. Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl. " +
+        "/tmp is writable. No apt. Returns stdout, stderr, exit_code.",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "Bash command to run" },
           timeout_ms: { type: "integer", description: "Max ms (default 25000, max 60000)" },
+        },
+        required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ubuntu_exec",
+      description:
+        "Run a bash command inside a fresh Ubuntu sandbox (full apt, longer execution budget). " +
+        "Use this when shell_exec is insufficient — apt install, compiled binaries, services, " +
+        "or jobs that need >60s. Cold-start cost ~2-5s, so prefer shell_exec for cheap one-shots.",
+      parameters: {
+        type: "object",
+        properties: {
+          command:   { type: "string", description: "Bash command to run in Ubuntu" },
+          timeout_ms:{ type: "integer", description: "Max ms (default 60000, max 120000)" },
         },
         required: ["command"],
       },
@@ -380,19 +399,24 @@ async function execMemoryTool(name, args, ctx = {}) {
 const MEMORY_TOOL_NAMES = new Set(MEMORY_TOOLS.map(t => t.function.name));
 
 function execLinuxTool(name, args) {
-  if (name !== "shell_exec") return Promise.resolve({ error: `Unknown Linux tool: ${name}` });
-  const timeout = Math.min(args.timeout_ms ?? 25000, 60000);
-  return new Promise(resolve =>
-    exec(
-      args.command,
-      { timeout, maxBuffer: 1024 * 512, shell: "/bin/bash" },
-      (err, stdout, stderr) => resolve({
-        stdout: (stdout ?? "").slice(0, 6000),
-        stderr: (stderr ?? "").slice(0, 2000),
-        exit_code: err?.code ?? 0,
-      })
-    )
-  );
+  if (name === "shell_exec") {
+    const timeout = Math.min(args.timeout_ms ?? 25000, 60000);
+    return new Promise(resolve =>
+      exec(
+        args.command,
+        { timeout, maxBuffer: 1024 * 512, shell: "/bin/bash" },
+        (err, stdout, stderr) => resolve({
+          stdout: (stdout ?? "").slice(0, 6000),
+          stderr: (stderr ?? "").slice(0, 2000),
+          exit_code: err?.code ?? 0,
+        })
+      )
+    );
+  }
+  if (name === "ubuntu_exec") {
+    return ubuntuExec(args.command ?? "", { timeout_ms: args.timeout_ms });
+  }
+  return Promise.resolve({ error: `Unknown Linux tool: ${name}` });
 }
 
 const LINUX_TOOL_NAMES = new Set(LINUX_TOOLS.map(t => t.function.name));
@@ -414,11 +438,15 @@ function buildCoordinatorSystemPrompt() {
 - Use Windows desktop tools when the task requires real desktop interaction
 - Synthesize all results into a comprehensive final answer
 
-## Linux Shell Tool (always available)
-You have shell_exec to run any bash command on an Amazon Linux serverless host.
-- Writable scratch: /tmp (ephemeral)
-- Available: bash, python3, node, curl, wget, git, grep, awk, sed, jq, find, zip, openssl
-- Use shell_exec for: HTTP calls, JSON parsing, file conversions, math/stats, anything concrete.
+## Linux Shell Tools (always available)
+- **shell_exec** — bash on Amazon Linux (Vercel runtime). Fast (<1s start),
+  ephemeral, /tmp writable. Pre-installed: bash, python3, node, curl, wget,
+  git, grep, awk, sed, jq, find, zip, openssl. No apt. Use this by default.
+- **ubuntu_exec** — bash inside a fresh Ubuntu sandbox. Use when:
+    * you need apt-get install <pkg>
+    * you need a compiled binary that isn't on Amazon Linux
+    * the job needs more than 60s of execution time
+  Cold-start ~2-5s, so don't use for trivial one-shots.
 - Prefer real commands over speculation.
 
 ## Persistent Memory (always available)

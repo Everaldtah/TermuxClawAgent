@@ -21,6 +21,7 @@ import { ghRead, ghWrite } from "../src/sync/github-storage.mjs";
 import { pullSession, pushSession } from "../src/storage/sessions.mjs";
 import { nextApiKey } from "../src/storage/keypool.mjs";
 import { recall as memoryRecall, saveFact as memorySaveFact, recordTurn as memoryRecordTurn, distillFacts as memoryDistill } from "../src/memory/cloud-memory.mjs";
+import { ubuntuExec } from "../src/tools/ubuntu-sandbox.mjs";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,8 @@ You are powered by ${model} via ${providerName}, running on Vercel cloud.
 - Storage: GitHub repo — vault and sessions synced
 
 ## Your Tools
-- **shell_exec**: Run any bash/Linux command (Amazon Linux, /tmp writable)
+- **shell_exec**: Run any bash/Linux command (Amazon Linux, /tmp writable, no apt)
+- **ubuntu_exec**: Run a bash command inside a fresh Ubuntu sandbox (full apt, longer jobs). Use only when shell_exec is insufficient.
 - **file_write**: Write a file to /tmp (ephemeral — use vault to persist)
 - **vault_read**: Read a note from the GitHub memory vault
 - **vault_write**: Write a note to the GitHub memory vault
@@ -93,6 +95,24 @@ const TOOLS = [
         properties: {
           command: { type: "string" },
           timeout_ms: { type: "integer", description: "Max ms (default 25000, max 60000)" },
+        },
+        required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ubuntu_exec",
+      description:
+        "Run a bash command inside a fresh Ubuntu sandbox (full apt, longer execution budget). " +
+        "Use this when shell_exec on the Vercel runtime is insufficient — apt install, compiled binaries, " +
+        "services, or jobs >60s. Has cold-start cost (~2-5s).",
+      parameters: {
+        type: "object",
+        properties: {
+          command:   { type: "string" },
+          timeout_ms:{ type: "integer", description: "Max ms (default 60000, max 120000)" },
         },
         required: ["command"],
       },
@@ -218,6 +238,9 @@ async function execTool(name, args, ctx = {}) {
             res({ stdout: (stdout ?? "").slice(0, 6000), stderr: (stderr ?? "").slice(0, 2000), exit_code: err?.code ?? 0 })
           )
         );
+      }
+      case "ubuntu_exec": {
+        return await ubuntuExec(args.command ?? "", { timeout_ms: args.timeout_ms });
       }
       case "file_write": {
         const safe = args.path.startsWith("/tmp/") ? args.path : `/tmp/${args.path.replace(/^\/+/, "")}`;

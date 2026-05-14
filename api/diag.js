@@ -8,6 +8,7 @@
 
 import https from "node:https";
 import { poolSize, nextApiKey } from "../src/storage/keypool.mjs";
+import { ubuntuSandboxAvailable, ubuntuSandboxBackend } from "../src/tools/ubuntu-sandbox.mjs";
 
 function nimPing(model, apiKey, timeoutMs = 18000) {
   return new Promise(resolve => {
@@ -101,6 +102,12 @@ export default async function handler(req, res) {
     },
     bridge: {
       windows_bridge_configured: has("WINDOWS_BRIDGE_URL"),
+    },
+    ubuntu_sandbox: {
+      available: ubuntuSandboxAvailable(),
+      backend: ubuntuSandboxBackend(),
+      e2b_key_set: has("E2B_API_KEY"),
+      remote_bridge_set: has("UBUNTU_BRIDGE_URL"),
     },
     runtime: {
       node: process.version,
