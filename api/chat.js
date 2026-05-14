@@ -374,7 +374,9 @@ async function llmPostRetry(baseUrl, apiKey, body, retries = 2) {
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
-async function runAgent(userText, history, send, providerCfg = {}, ctx = {}) {
+const CancelledError = class extends Error { constructor() { super("Cancelled by user"); this.code = "CANCELLED"; } };
+
+async function runAgent(userText, history, send, providerCfg = {}, ctx = {}, isCancelled = () => false) {
   const {
     apiKey   = DEFAULT_API_KEY,
     baseUrl  = DEFAULT_BASE_URL,
@@ -408,8 +410,13 @@ async function runAgent(userText, history, send, providerCfg = {}, ctx = {}) {
   let finalContent = null;
 
   while (round < MAX_TOOL_ROUNDS) {
+    if (isCancelled()) throw new CancelledError();
     round++;
     send("round", { round });
+    // send("round") triggers a persist → which calls ghSafeWrite → which
+    // refreshes the `cancelled` flag from the storage repo. So this check
+    // catches cancellations that landed during the previous round.
+    if (isCancelled()) throw new CancelledError();
 
     const reqBody = {
       model,
@@ -457,6 +464,8 @@ async function runAgent(userText, history, send, providerCfg = {}, ctx = {}) {
       send("tool_result", { text: String(out).slice(0, 500) });
 
       history.push({ role: "tool", tool_call_id: tc.id, name: fnName, content: JSON.stringify(result) });
+
+      if (isCancelled()) throw new CancelledError();
     }
 
     if (round === MAX_TOOL_ROUNDS) {
@@ -529,18 +538,35 @@ export default async function handler(req, res) {
 
   const rounds = [];
   let currentRound = null;
+  // Cancel flag — flipped to true when ghSafeWrite reads back a record with
+  // cancelRequested=true (set by POST /job?action=cancel from a different
+  // function instance). Agent loop checks this between rounds.
+  let cancelled = false;
 
   async function ghSafeWrite(content) {
     try {
       const existing = await ghRead(jobPath);
+      if (existing?.content) {
+        try {
+          const parsed = JSON.parse(existing.content);
+          if (parsed.cancelRequested) cancelled = true;
+        } catch {}
+      }
       await ghWrite(jobPath, content, existing?.sha ?? null);
     } catch {
       try {
         const fresh = await ghRead(jobPath);
+        if (fresh?.content) {
+          try {
+            const parsed = JSON.parse(fresh.content);
+            if (parsed.cancelRequested) cancelled = true;
+          } catch {}
+        }
         await ghWrite(jobPath, content, fresh?.sha ?? null);
       } catch {}
     }
   }
+  const isCancelled = () => cancelled;
 
   // Serialized write chain so concurrent updates don't race the GitHub sha
   let writeChain = ghSafeWrite(JSON.stringify(jobBase, null, 2));
@@ -601,7 +627,7 @@ export default async function handler(req, res) {
     const history = stored ?? [];
 
     send("provider", { name: providerCfg.provider, model: providerCfg.model, poolSize: providerCfg.poolSize });
-    const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg, { sessionId });
+    const { reply, history: updated } = await runAgent(message.trim(), history, send, providerCfg, { sessionId }, isCancelled);
     if (currentRound) { rounds.push(currentRound); currentRound = null; }
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
@@ -633,14 +659,16 @@ export default async function handler(req, res) {
       durationMs: Date.now() - created,
     }, null, 2));
   } catch (err) {
-    sseWrite("error", { text: err.message });
+    const isCancel = err?.code === "CANCELLED";
+    sseWrite(isCancel ? "cancelled" : "error", { text: err.message });
     if (currentRound) { rounds.push(currentRound); currentRound = null; }
     await writeChain;
     await ghSafeWrite(JSON.stringify({
       ...jobBase,
-      status: "error",
+      status: isCancel ? "cancelled" : "error",
       rounds,
-      error: err.message,
+      error: isCancel ? null : err.message,
+      cancelledAt: isCancel ? Date.now() : undefined,
       updated: Date.now(),
       durationMs: Date.now() - created,
     }, null, 2)).catch(() => {});

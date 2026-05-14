@@ -362,7 +362,7 @@ async function llmPostRetry(baseUrl, apiKey, body, retries = 2) {
 
 // ── Agentic loop ──────────────────────────────────────────────────────────────
 
-async function runAgent(userText, history, onEvent, providerCfg = {}, ctx = {}) {
+async function runAgent(userText, history, onEvent, providerCfg = {}, ctx = {}, isCancelled = () => false) {
   const {
     apiKey  = DEFAULT_API_KEY,
     baseUrl = DEFAULT_BASE_URL,
@@ -390,8 +390,10 @@ async function runAgent(userText, history, onEvent, providerCfg = {}, ctx = {}) 
   let finalContent = null;
 
   while (round < MAX_TOOL_ROUNDS) {
+    if (isCancelled()) throw new CancelledError();
     round++;
     onEvent("round", { round });
+    if (isCancelled()) throw new CancelledError();
 
     const reqBody = {
       model,
@@ -438,6 +440,8 @@ async function runAgent(userText, history, onEvent, providerCfg = {}, ctx = {}) 
       onEvent("tool_result", { text: String(out).slice(0, 500) });
 
       history.push({ role: "tool", tool_call_id: tc.id, name: fnName, content: JSON.stringify(result) });
+
+      if (isCancelled()) throw new CancelledError();
     }
 
     if (round === MAX_TOOL_ROUNDS) {
@@ -460,14 +464,18 @@ async function ghSafeWrite(path, content) {
   try {
     const existing = await ghRead(path);
     await ghWrite(path, content, existing?.sha ?? null);
+    return existing?.content ?? null;
   } catch (err) {
-    // On SHA conflict, retry once with fresh read
     try {
       const fresh = await ghRead(path);
       await ghWrite(path, content, fresh?.sha ?? null);
+      return fresh?.content ?? null;
     } catch {}
+    return null;
   }
 }
+
+const CancelledError = class extends Error { constructor() { super("Cancelled by user"); this.code = "CANCELLED"; } };
 
 // ── Vercel handler ────────────────────────────────────────────────────────────
 
@@ -525,11 +533,20 @@ export default async function handler(req, res) {
 
   const rounds = [];
   let currentRound = null;
+  let cancelled = false;
+  const isCancelled = () => cancelled;
 
-  // Serialized write chain — ensures GitHub writes don't race each other
+  // Serialized write chain — ensures GitHub writes don't race each other.
+  // Also peeks at the previous record to surface cancelRequested back to the
+  // agent loop (a different function instance may have set it via /job?action=cancel).
   let writeChain = Promise.resolve();
   const queueWrite = (data) => {
-    writeChain = writeChain.then(() => ghSafeWrite(jobPath, JSON.stringify(data, null, 2))).catch(() => {});
+    writeChain = writeChain.then(async () => {
+      const prev = await ghSafeWrite(jobPath, JSON.stringify(data, null, 2));
+      if (prev) {
+        try { if (JSON.parse(prev).cancelRequested) cancelled = true; } catch {}
+      }
+    }).catch(() => {});
   };
 
   const onEvent = (type, data) => {
@@ -560,7 +577,7 @@ export default async function handler(req, res) {
     const stored = await pullSession(webSessionKey).catch(() => null);
     const history = stored ?? [];
 
-    const { reply, history: updated } = await runAgent(message.trim(), history, onEvent, providerCfg, { sessionId });
+    const { reply, history: updated } = await runAgent(message.trim(), history, onEvent, providerCfg, { sessionId }, isCancelled);
     if (currentRound) rounds.push(currentRound);
 
     const toSave = updated.filter(m => m.role !== "system").slice(-HISTORY_MAX_MSGS);
@@ -586,12 +603,14 @@ export default async function handler(req, res) {
       durationMs: Date.now() - created,
     }, null, 2));
   } catch (err) {
+    const isCancel = err?.code === "CANCELLED";
     if (currentRound) rounds.push(currentRound);
     await writeChain;
     await ghSafeWrite(jobPath, JSON.stringify({
       ...jobBase,
-      status: "error",
-      error: err.message,
+      status: isCancel ? "cancelled" : "error",
+      error: isCancel ? null : err.message,
+      cancelledAt: isCancel ? Date.now() : undefined,
       rounds,
       updated: Date.now(),
       durationMs: Date.now() - created,

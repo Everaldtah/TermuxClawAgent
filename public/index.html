@@ -174,6 +174,9 @@
     .job-load-btn:hover{background:#2563eb}
     .job-del-btn{background:#0e0e0e;color:#555;border:1px solid #222;border-radius:6px;padding:4px 8px;font-family:inherit;font-size:0.72rem;cursor:pointer}
     .job-del-btn:hover{color:#ef4444;border-color:#ef444444}
+    .job-stop-btn{background:#7f1d1d;color:#fecaca;border:0;border-radius:6px;padding:4px 10px;font-family:inherit;font-size:0.72rem;cursor:pointer}
+    .job-stop-btn:hover{background:#991b1b}
+    .job-stop-btn:disabled{background:#3a1a1a;color:#6b3a3a;cursor:wait}
 
     /* Tags */
     .tag{font-size:0.67rem;padding:2px 6px;border-radius:10px;background:#141414;border:1px solid #1e1e1e;color:#555;white-space:nowrap}
@@ -181,6 +184,8 @@
     @keyframes tpulse{0%,100%{opacity:1}50%{opacity:.5}}
     .tag.done{color:#22c55e;border-color:#22c55e33}
     .tag.error{color:#ef4444;border-color:#ef444433}
+    .tag.cancelled{color:#94a3b8;border-color:#475569}
+    .tag.cancelling{color:#fca5a5;border-color:#7f1d1d;animation:tpulse 1.2s infinite}
     .tag.rounds{color:#a78bfa;border-color:#a78bfa33}
     .tag.dur{color:#60a5fa;border-color:#60a5fa33}
 
@@ -329,9 +334,10 @@
     <div class="section-head">
       <span class="section-title">⚡ Background Jobs</span>
       <span class="badge" id="jobs-badge">0 jobs</span>
+      <button id="jobs-stop-all" onclick="cancelAllActive()" style="margin-left:auto;background:#7f1d1d;border:0;color:#fecaca;border-radius:6px;padding:4px 10px;font-size:0.7rem;cursor:pointer;display:none">✕ Stop all</button>
     </div>
     <div class="jobs-list" id="jobs-list">
-      <p class="empty">No background jobs. Toggle ⚡ BG and submit a message to queue a job that runs after you close the page.</p>
+      <p class="empty">No background jobs. Toggle ⚡ BG and submit a message to queue a job that runs after you close the page. <kbd style="background:#1e1e1e;border:1px solid #2a2a2a;border-radius:3px;padding:1px 5px;font-size:0.7rem">Esc</kbd> stops everything.</p>
     </div>
   </div>
 
@@ -706,10 +712,15 @@ async function sendMessage() {
   addMessage('user', text);
   startThinkingFeed();
 
+  const controller = new AbortController();
+  const tmpKey = registerActiveStream(controller);
+  let activeJobId = null;
+
   try {
     const r = await fetch('/chat', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
+      signal: controller.signal,
     });
     if (!r.ok) {
       // Try to surface the real server error message (e.g. "No API key available").
@@ -733,7 +744,14 @@ async function sendMessage() {
           // Server has registered a background job for this prompt. Persist
           // immediately so closing the tab does not lose the work — pollJobs
           // will pick up the final result on return.
+          activeJobId = evt.jobId;
+          adoptStreamJobId(tmpKey, evt.jobId);
           upsertJob({ id: evt.jobId, status:'running', mode:'chat', message: text, created: Date.now(), rounds: [], reply: null });
+          showStopButtonForChat(evt.jobId);
+        } else if (evt.type === 'cancelled') {
+          endThinkingFeed();
+          addMessage('agent', '⏹ Cancelled by you.');
+          setStatus('ready');
         } else if (['round','thinking','tool_call','tool_result','provider'].includes(evt.type)) {
           handleFeedEvent(evt);
         } else if (evt.type === 'reply') {
@@ -753,18 +771,39 @@ async function sendMessage() {
   } catch (err) {
     endThinkingFeed();
     const msg = String(err?.message || err);
+    const isAbort = err?.name === 'AbortError';
     const isAuth = /api key|No API key/i.test(msg);
-    if (isAuth) {
+    if (isAbort) {
+      addMessage('agent', '⏹ Cancelled.');
+    } else if (isAuth) {
       addMessage('agent', '❌ ' + msg + '\n\nClick "⚙ API Configuration" above, pick your provider, paste your API key, and try again.');
     } else {
       addMessage('agent', '⚠️ ' + msg + ' — if the task started, it may still be running. Reopen the app to see the result.');
     }
     setStatus('ready');
+  } finally {
+    clearActiveStream(activeJobId || tmpKey);
+    hideStopButtonForChat();
   }
 
   busy = false;
   document.getElementById('send-btn').disabled = false;
   input.focus();
+}
+
+// Stop button for an in-flight chat run — attached to the thinking feed area.
+function showStopButtonForChat(jobId) {
+  const feed = document.getElementById('thinking-feed');
+  if (!feed || feed.querySelector('.chat-stop-btn')) return;
+  const btn = document.createElement('button');
+  btn.className = 'chat-stop-btn';
+  btn.textContent = '✕ Stop';
+  btn.style.cssText = 'background:#7f1d1d;border:0;color:#fecaca;border-radius:6px;padding:4px 10px;font-size:0.72rem;cursor:pointer;margin-top:6px;align-self:flex-start';
+  btn.onclick = () => cancelJob(jobId);
+  feed.appendChild(btn);
+}
+function hideStopButtonForChat() {
+  document.querySelector('.chat-stop-btn')?.remove();
 }
 
 // ── Computer mode send ────────────────────────────────────────────────────────
@@ -775,10 +814,15 @@ async function sendComputerMode(text) {
   setStatus('planning…');
   startComputerMode(text);
 
+  const controller = new AbortController();
+  const tmpKey = registerActiveStream(controller);
+  let activeJobId = null;
+
   try {
     const r = await fetch('/computer', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ message: text, sessionId: getSessionId(), ...getApiConfig() }),
+      signal: controller.signal,
     });
     if (!r.ok) {
       let detail = `HTTP ${r.status}`;
@@ -798,7 +842,18 @@ async function sendComputerMode(text) {
         if (!line.startsWith('data: ')) continue;
         let evt; try { evt=JSON.parse(line.slice(6)); } catch { continue; }
         if (evt.type === 'job') {
+          activeJobId = evt.jobId;
+          adoptStreamJobId(tmpKey, evt.jobId);
           upsertJob({ id: evt.jobId, status:'running', mode:'computer', message: text, created: Date.now(), rounds: [], reply: null });
+          showStopButtonForComputer(evt.jobId);
+          continue;
+        }
+        if (evt.type === 'cancelled') {
+          const ph = document.getElementById('cm-phase-text');
+          if (ph) ph.textContent = '⏹ Cancelled by you.';
+          const dot = document.querySelector('.cm-phase-dot');
+          if (dot) { dot.style.background='#94a3b8'; dot.style.animation='none'; }
+          setStatus('ready');
           continue;
         }
         if (evt.type==='phase') setStatus(evt.phase+'…');
@@ -808,12 +863,16 @@ async function sendComputerMode(text) {
     }
   } catch (err) {
     const msg = String(err?.message || err);
+    const isAbort = err?.name === 'AbortError';
     const isAuth = /api key|No API key/i.test(msg);
     if (computerMsgEl) {
       const ph = document.getElementById('cm-phase-text');
-      if (ph) ph.textContent = (isAuth ? '❌ ' : '⚠️ ') + msg;
-      if (isAuth) {
-        const dot = document.querySelector('.cm-phase-dot');
+      const dot = document.querySelector('.cm-phase-dot');
+      if (isAbort) {
+        if (ph) ph.textContent = '⏹ Cancelled by you.';
+        if (dot) { dot.style.background = '#94a3b8'; dot.style.animation = 'none'; }
+      } else if (isAuth) {
+        if (ph) ph.textContent = '❌ ' + msg;
         if (dot) { dot.style.background = '#ef4444'; dot.style.animation = 'none'; }
         const wrap = computerMsgEl.querySelector('div[id="cm-win-actions"]')?.parentElement;
         if (wrap) {
@@ -822,14 +881,35 @@ async function sendComputerMode(text) {
           help.innerHTML = 'Open <strong>⚙ API Configuration</strong> above, pick a provider, paste your API key, then try again.';
           wrap.appendChild(help);
         }
+      } else {
+        if (ph) ph.textContent = '⚠️ ' + msg;
       }
     }
     setStatus('ready');
+  } finally {
+    clearActiveStream(activeJobId || tmpKey);
+    hideStopButtonForComputer();
   }
 
   computerMsgEl = null; cpuTaskMap = {};
   busy = false;
   document.getElementById('send-btn').disabled = false;
+}
+
+function showStopButtonForComputer(jobId) {
+  if (!computerMsgEl) return;
+  if (computerMsgEl.querySelector('.cm-stop-btn')) return;
+  const phaseEl = computerMsgEl.querySelector('#cm-phase');
+  if (!phaseEl) return;
+  const btn = document.createElement('button');
+  btn.className = 'cm-stop-btn';
+  btn.textContent = '✕ Stop';
+  btn.style.cssText = 'margin-left:auto;background:#7f1d1d;border:0;color:#fecaca;border-radius:6px;padding:3px 10px;font-size:0.68rem;cursor:pointer';
+  btn.onclick = () => cancelJob(jobId);
+  phaseEl.appendChild(btn);
+}
+function hideStopButtonForComputer() {
+  document.querySelector('.cm-stop-btn')?.remove();
 }
 
 // ── Background jobs ───────────────────────────────────────────────────────────
@@ -839,12 +919,78 @@ function saveJobs(j){localStorage.setItem('solis_jobs',JSON.stringify(j.slice(0,
 function upsertJob(job){const jobs=getJobs();const i=jobs.findIndex(j=>j.id===job.id);if(i!==-1)jobs[i]=job;else jobs.unshift(job);saveJobs(jobs);renderJobs();}
 function removeJob(id){saveJobs(getJobs().filter(j=>j.id!==id));renderJobs();}
 
+// ── Cancellation ──────────────────────────────────────────────────────────────
+// Active in-flight streams (chat or computer mode). Keyed by jobId once the
+// server has emitted the {type:"job", jobId} event; before that, the AbortController
+// is parked under a temporary "live:<n>" key and adopted to its real id on arrival.
+const activeStreams = new Map(); // id → AbortController
+let liveStreamTmpKey = null;     // current pre-jobId temporary key
+
+function registerActiveStream(controller) {
+  liveStreamTmpKey = 'live:' + Date.now();
+  activeStreams.set(liveStreamTmpKey, controller);
+  return liveStreamTmpKey;
+}
+function adoptStreamJobId(tmpKey, jobId) {
+  const c = activeStreams.get(tmpKey);
+  if (c) { activeStreams.delete(tmpKey); activeStreams.set(jobId, c); }
+}
+function clearActiveStream(idOrKey) {
+  activeStreams.delete(idOrKey);
+}
+
+/** Cancel a single job by id. Aborts the local stream if it is owned here,
+ *  and POSTs the cancel signal so any backgrounded run also stops. */
+async function cancelJob(id) {
+  if (!id) return;
+  // 1. Abort the local stream (closes the SSE connection from our side).
+  const controller = activeStreams.get(id);
+  if (controller) { try { controller.abort(); } catch {} activeStreams.delete(id); }
+  // 2. Signal the backend.
+  try {
+    await fetch('/job?id=' + encodeURIComponent(id) + '&action=cancel', { method: 'POST' });
+    const jobs = getJobs();
+    const idx = jobs.findIndex(j => j.id === id);
+    if (idx !== -1) { jobs[idx].status = 'cancelling'; saveJobs(jobs); renderJobs(); }
+    showNotification('Cancelling job…');
+  } catch (err) {
+    showNotification('Cancel request failed: ' + err.message, true);
+  }
+}
+
+/** Cancel everything in flight — the currently visible chat/computer run AND
+ *  every running BG job. Bound to the Escape key + the global Stop All button. */
+async function cancelAllActive() {
+  const ids = new Set();
+  for (const id of activeStreams.keys()) {
+    if (!id.startsWith('live:')) ids.add(id);
+  }
+  for (const j of getJobs()) {
+    if (j.status === 'running' || j.status === 'cancelling') ids.add(j.id);
+  }
+  // Also kill any pre-jobId temp stream
+  for (const k of [...activeStreams.keys()]) {
+    if (k.startsWith('live:')) { try { activeStreams.get(k).abort(); } catch {} activeStreams.delete(k); }
+  }
+  if (!ids.size) { showNotification('Nothing running to stop.'); return; }
+  await Promise.all([...ids].map(id => cancelJob(id)));
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const anyActive = activeStreams.size > 0 || getJobs().some(j => j.status === 'running');
+    if (anyActive) { e.preventDefault(); cancelAllActive(); }
+  }
+});
+
 function renderJobs(){
   const jobs=getJobs();
   const badge=document.getElementById('jobs-badge');
-  const running=jobs.filter(j=>j.status==='running').length;
+  const running=jobs.filter(j=>j.status==='running'||j.status==='cancelling').length;
   badge.textContent=jobs.length+' job'+(jobs.length!==1?'s':'')+(running?` · ${running} running`:'');
   badge.className='badge'+(running?' live':'');
+  const stopAll=document.getElementById('jobs-stop-all');
+  if(stopAll) stopAll.style.display=running?'inline-block':'none';
   const c=document.getElementById('jobs-list');
   if(!jobs.length){c.innerHTML='<p class="empty">No background jobs. Toggle ⚡ BG and submit a message.</p>';return;}
   c.innerHTML=jobs.map(job=>{
@@ -888,7 +1034,9 @@ function renderJobs(){
 
     const actions=job.status==='done'
       ?`<div class="job-actions"><button class="job-load-btn" onclick="loadJobToChat('${escHtml(job.id)}')">Load reply in chat</button><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕</button></div>`
-      :job.status==='error'?`<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`:'';
+      :job.status==='error'?`<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`
+      :job.status==='cancelled'?`<div class="job-actions"><button class="job-del-btn" onclick="removeJob('${escHtml(job.id)}')">✕ dismiss</button></div>`
+      :(job.status==='running'||job.status==='cancelling')?`<div class="job-actions"><button class="job-stop-btn" onclick="cancelJob('${escHtml(job.id)}')" ${job.status==='cancelling'?'disabled':''}>${job.status==='cancelling'?'stopping…':'✕ Stop'}</button></div>`:'';
 
     return`<div class="job-entry"><div class="job-head"><div class="job-msg">${escHtml(job.message.slice(0,120))}${job.message.length>120?'…':''}</div><div class="job-meta"><span class="tag ${job.status}">${job.status}</span>${rcTag}${durTag}<span class="tag">${fmtTime(job.created)}</span></div></div>${replyBlock}${errBlock}${roundsHtml}${actions}</div>`;
   }).join('');

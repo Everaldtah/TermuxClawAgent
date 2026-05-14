@@ -525,13 +525,26 @@ export default async function handler(req, res) {
     rounds: [],
   };
 
+  // Cancel-on-demand: if any function instance flips cancelRequested on the
+  // job record (via POST /job?action=cancel), our next read picks it up and
+  // the coordinator/synthesis loop exits cleanly with status="cancelled".
+  let cancelled = false;
+  const isCancelled = () => cancelled;
+  const CANCEL = () => { const e = new Error("Cancelled by user"); e.code = "CANCELLED"; throw e; };
+
   async function ghSafeWrite(content) {
     try {
       const ex = await ghRead(jobPath);
+      if (ex?.content) {
+        try { if (JSON.parse(ex.content).cancelRequested) cancelled = true; } catch {}
+      }
       await ghWrite(jobPath, content, ex?.sha ?? null);
     } catch {
       try {
         const fresh = await ghRead(jobPath);
+        if (fresh?.content) {
+          try { if (JSON.parse(fresh.content).cancelRequested) cancelled = true; } catch {}
+        }
         await ghWrite(jobPath, content, fresh?.sha ?? null);
       } catch {}
     }
@@ -608,6 +621,7 @@ export default async function handler(req, res) {
   try {
     // ── Phase 1: Planning ────────────────────────────────────────────────────
     send("phase", { phase: "planning", message: "Coordinator analyzing task…" });
+    if (isCancelled()) CANCEL();
 
     const availableSpecialists = SPECIALISTS.filter(s => s.apiKey);
     const numSubtasks = Math.min(availableSpecialists.length, 4);
@@ -654,6 +668,7 @@ The subtasks should cover different angles of the problem and be self-contained.
     });
 
     // ── Phase 2: Specialist parallel execution ───────────────────────────────
+    if (isCancelled()) CANCEL();
     send("phase", { phase: "running", message: `${assignments.length} specialists working in parallel…` });
 
     const specialistResults = await Promise.all(
@@ -690,6 +705,7 @@ You have been assigned a specific subtask as part of a larger collaborative effo
     // ── Phase 3: Coordinator tool loop (Linux shell + memory + optional Win) ─
     // Always run this so the coordinator has shell + memory access regardless
     // of WIN_ENABLED.
+    if (isCancelled()) CANCEL();
     send("phase", { phase: "executing", message: "Coordinator executing tools…" });
 
     const activeTools = [
@@ -733,8 +749,10 @@ You have been assigned a specific subtask as part of a larger collaborative effo
     let round = 0;
 
     while (round < MAX_COORDINATOR_ROUNDS) {
+      if (isCancelled()) CANCEL();
       round++;
       send("round", { round });
+      if (isCancelled()) CANCEL();
 
       const msg = await nimCallToolsRetry(
         COORDINATOR.model,
@@ -823,6 +841,7 @@ You have been assigned a specific subtask as part of a larger collaborative effo
     const windowsContext = executionSummary;
 
     // ── Phase 4: Synthesis ───────────────────────────────────────────────────
+    if (isCancelled()) CANCEL();
     send("phase", { phase: "synthesizing", message: "Coordinator synthesizing all results…" });
 
     const specialistContext = specialistResults
@@ -873,7 +892,15 @@ Synthesize everything into the best possible final answer.`,
       memoryDistill(sessionId, synthHistory, llmShim).catch(() => {});
     }
   } catch (err) {
-    send("error", { text: err.message });
+    if (err?.code === "CANCELLED") {
+      jobBase.status = "cancelled";
+      jobBase.cancelledAt = Date.now();
+      jobBase.durationMs = Date.now() - createdAt;
+      sseWrite("cancelled", { text: "Cancelled by user" });
+      persist();
+    } else {
+      send("error", { text: err.message });
+    }
   }
 
   clearInterval(keepAlive);
