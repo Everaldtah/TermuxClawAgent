@@ -6,7 +6,57 @@
  * Does NOT leak any key values.
  */
 
-import { poolSize } from "../src/storage/keypool.mjs";
+import https from "node:https";
+import { poolSize, nextApiKey } from "../src/storage/keypool.mjs";
+
+function nimPing(model, apiKey, timeoutMs = 18000) {
+  return new Promise(resolve => {
+    const t0 = Date.now();
+    const body = JSON.stringify({
+      model, max_tokens: 8, temperature: 0,
+      messages: [{ role: "user", content: "say ok" }],
+      stream: false,
+    });
+    const u = new URL("https://integrate.api.nvidia.com/v1/chat/completions");
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return; settled = true;
+      try { req.destroy(); } catch {}
+      resolve({ ok: false, ms: Date.now() - t0, error: `client timeout ${timeoutMs}ms` });
+    }, timeoutMs);
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname, method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        Authorization: `Bearer ${apiKey}`,
+      },
+    }, r => {
+      let raw = "";
+      r.on("data", c => raw += c);
+      r.on("end", () => {
+        if (settled) return; settled = true; clearTimeout(timer);
+        try {
+          const j = JSON.parse(raw);
+          resolve({
+            ok: !j.error && Boolean(j?.choices?.[0]),
+            ms: Date.now() - t0,
+            content: j?.choices?.[0]?.message?.content?.slice(0, 80) ?? null,
+            error: j?.error?.message ?? null,
+            status: r.statusCode,
+          });
+        } catch {
+          resolve({ ok: false, ms: Date.now() - t0, status: r.statusCode, error: raw.slice(0, 200) });
+        }
+      });
+    });
+    req.on("error", e => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      resolve({ ok: false, ms: Date.now() - t0, error: e.message });
+    });
+    req.write(body); req.end();
+  });
+}
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -15,6 +65,21 @@ export default async function handler(req, res) {
 
   const has = (k) => Boolean(process.env[k] && String(process.env[k]).trim().length);
   const NVIDIA_KEY_NAMES = Object.keys(process.env).filter(k => /^NVIDIA_API_KEY\d*$/.test(k) || /^NVIDIA_KEY_[A-Z0-9_]+$/.test(k));
+
+  // Optional: ping=<model[,model2,...]> runs a short health-check call against
+  // each model using a key pulled from the pool. Lets the operator confirm
+  // which models actually answer with the keys configured on Vercel.
+  let pings = null;
+  if (req.query?.ping) {
+    const models = String(req.query.ping).split(",").map(s => s.trim()).filter(Boolean).slice(0, 6);
+    const key = await nextApiKey().catch(() => "");
+    if (!key) {
+      pings = { error: "no NIM key available in pool" };
+    } else {
+      pings = {};
+      for (const m of models) pings[m] = await nimPing(m, key);
+    }
+  }
 
   res.status(200).json({
     ok: true,
@@ -39,5 +104,6 @@ export default async function handler(req, res) {
       node: process.version,
       region: process.env.VERCEL_REGION || null,
     },
+    pings,
   });
 }
